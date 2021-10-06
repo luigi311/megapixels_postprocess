@@ -29,6 +29,8 @@ exiftool_function () {
 }
 
 finalize_image () {
+    FALLBACK=0
+
     if [ "$EXTERNAL_EXTENSION" = "jxl" ]; then
         if command -v "cjxl" > /dev/null; then
             OUTPUT_EXTENSION="jxl"
@@ -120,9 +122,12 @@ if [ -n "$DCRAW" ]; then
         finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
 
         if [ -f "/etc/megapixels/auto_stack.py" ]; then
-            for FILE in "${BURST_DIR}"/*; do
+            for FILE in "${BURST_DIR}"/*.dng; do
                 $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
             done
+
+            # Remove original main conversion so it is not included in the stacking
+            rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
 
             python /etc/megapixels/auto_stack.py "${BURST_DIR}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" --method ECC
 
