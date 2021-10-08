@@ -14,7 +14,7 @@
 # The post-processing script is responsible for cleaning up
 # temporary directory for the burst.
 
-set -e
+set -eE
 
 # keep track of the last executed command
 trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
@@ -22,7 +22,7 @@ trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
 trap 'trap_die' EXIT
 
 log () {
-    printf '[%s] postprocess: %s\n' "$(date)" "$1" >> "${LOGFILE}"
+    printf '[%s] %s: %s\n' "$(date)" "$1" "$2" >> "${LOGFILE}"
 }
 
 
@@ -83,7 +83,11 @@ INTERNAL_EXTENSION="png"
 EXTERNAL_EXTENSION="png"
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
-
+PROCESSED=0
+AUTO_STACK=1
+SUPER_RESOLUTION=1
+LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
+FUNCTION="postprocess"
 
 # Copy the first frame of the burst as the raw photo
 cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
@@ -125,49 +129,75 @@ if [ -n "$DCRAW" ]; then
 	# -o 1		Output in sRGB colorspace
 	# -q 3		Debayer with AHD algorithm
 	# -T		Output TIFF
-    log "$DCRAW +M -H 4 -o 1 -q 3 -T $@ \"${MAIN_PICTURE}.dng\""
+    log "$FUNCTION" "$DCRAW +M -H 4 -o 1 -q 3 -T $@ \"${MAIN_PICTURE}.dng\""
     $DCRAW +M -H 4 -o 1 -q 3 -T "$@" "${MAIN_PICTURE}.dng"
 
     # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
     if [ -n "$CONVERT" ];
     then
         if [ "$CONVERT" = "convert" ]; then
-            log "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+            log "$FUNCTION" "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
             convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 -sigmoidal-contrast 6,50% "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
         else
             # sadly sigmoidal contrast is not available in imagemagick
-            log "Sigmoidal contrast not avaliable convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+            log "$FUNCTION" "Sigmoidal contrast not avaliable convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
             gm convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
         fi
 
-        log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+        log "$FUNCTION" "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
         exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
 
-        log "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+        log "$FUNCTION" "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
 
-        if [ -f "/etc/megapixels/auto_stack.py" ]; then
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] && [ "$AUTO_STACK" -eq 1 ]; then
+            FUNCTION="auto_stack"
+            log "$FUNCTION" "Processing with auto stack"
             for FILE in "${BURST_DIR}"/*.dng; do
-                log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
+                log "$FUNCTION" "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
                 $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
             done
 
             # Remove original main conversion so it is not included in the stacking
-            log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
+            log "$FUNCTION" "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
             rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
 
-            log "python /etc/megapixels/auto_stack.py \"${BURST_DIR}\" \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\" --method ECC --filter_contrast"
-            auto_stack=$(python /etc/megapixels/auto_stack.py "${BURST_DIR}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" --method ECC --filter_contrast)
-            log "$auto_stack"
+            log "$FUNCTION" "python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py \"${BURST_DIR}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" --method ECC --filter_contrast"
+            MESSAGES=$(python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py "${BURST_DIR}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}" --method ECC --filter_contrast 2>&1)
+            log "$FUNCTION" "$MESSAGES"
 
-            log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\""
-            exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}"
+            log "$FUNCTION" "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
+            exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
 
-            log "finalize_image \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_combined\""
-            finalize_image "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" "${TARGET_NAME}_combined"
+            PROCESSED=1
         fi
-        log "Complete"
-        echo "${TARGET_NAME}.${OUTPUT_EXTENSION}"
+
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] && [ "$SUPER_RESOLUTION" -eq 1 ]; then
+            FUNCTION="super_resolution"
+            log "$FUNCTION" "Processing with super resolution"
+            if [ "$PROCESSED" -eq 1 ]; then
+                INPUT_IMAGE="${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
+            else
+                INPUT_IMAGE="${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+            fi
+            
+            log "$FUNCTION" "python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py \"${INPUT_IMAGE}\" \"${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}\" --method ESPCN --scale 2"
+            MESSAGES=$(python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py "${INPUT_IMAGE}" "${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}" --method ESPCN --scale 2 2>&1)
+            log "$FUNCTION" "${MESSAGES}"
+
+            mv "${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
+    
+            PROCESSED=1
+        fi
+
+        fi
+        FUNCTION="postprocess"
+        if [ "$PROCESSED" -eq 1 ]; then
+            log "$FUNCTION" "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
+            finalize_image "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}" "${TARGET_NAME}_processed"
+        fi
+
+        log "$FUNCTION" "Complete"
     else
         cp "${MAIN_PICTURE}.${TIFF_EXT}" "${TARGET_NAME}.tiff"
 
@@ -176,7 +206,7 @@ if [ -n "$DCRAW" ]; then
 fi
 
 # Clean up the temp dir containing the burst
-rm -rf "$BURST_DIR"
+#rm -rf "$BURST_DIR"
 
 # Clean up the .dng if the user didn't want it
 if [ "$SAVE_DNG" -eq "0" ]; then
