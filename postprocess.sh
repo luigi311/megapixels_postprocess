@@ -16,6 +16,26 @@
 
 set -e
 
+# keep track of the last executed command
+trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
+# echo an error message before exiting
+trap 'trap_die' EXIT
+
+log () {
+    printf '[%s] postprocess: %s\n' "$(date)" "$1" >> "${LOGFILE}"
+}
+
+
+trap_die () {
+    EXIT_CODE="$?"
+    if [ "${EXIT_CODE}" -eq 0 ]; then
+        rm -f "${LOGFILE:?}"
+    else
+        MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
+        log "${MESSAGE}"
+    fi
+}
+
 exiftool_function () {
     # If exiftool is installed copy the exif data over from the tiff to the jpeg
     # since imagemagick is stupid
@@ -56,14 +76,14 @@ if [ "$#" -ne 3 ]; then
 	echo "Usage: $0 [burst-dir] [target-name] [save-dng]"
 	exit 2
 fi
-
-BURST_DIR="$1"
+BURST_DIR="${1%/}"
 TARGET_NAME="$2"
 SAVE_DNG="$3"
 INTERNAL_EXTENSION="png"
 EXTERNAL_EXTENSION="png"
-
+LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
+
 
 # Copy the first frame of the burst as the raw photo
 cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
@@ -104,38 +124,49 @@ if [ -n "$DCRAW" ]; then
 	# -H 4		Recover highlights by rebuilding them
 	# -o 1		Output in sRGB colorspace
 	# -q 3		Debayer with AHD algorithm
-	# -T		Output TIFF    
-    $DCRAW +M -H 4 -o 1 -q 3 -T "$@" "$MAIN_PICTURE.dng"
+	# -T		Output TIFF
+    log "$DCRAW +M -H 4 -o 1 -q 3 -T $@ \"${MAIN_PICTURE}.dng\""
+    $DCRAW +M -H 4 -o 1 -q 3 -T "$@" "${MAIN_PICTURE}.dng"
 
     # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
     if [ -n "$CONVERT" ];
     then
         if [ "$CONVERT" = "convert" ]; then
+            log "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
             convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 -sigmoidal-contrast 6,50% "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
         else
             # sadly sigmoidal contrast is not available in imagemagick
+            log "Sigmoidal contrast not avaliable convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
             gm convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
         fi
 
+        log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
         exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
 
+        log "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
 
         if [ -f "/etc/megapixels/auto_stack.py" ]; then
             for FILE in "${BURST_DIR}"/*.dng; do
+                log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
                 $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
             done
 
             # Remove original main conversion so it is not included in the stacking
+            log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
             rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
 
-            python /etc/megapixels/auto_stack.py "${BURST_DIR}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" --method ECC
+            log "python /etc/megapixels/auto_stack.py \"${BURST_DIR}\" \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\" --method ECC --filter_contrast"
+            auto_stack=$(python /etc/megapixels/auto_stack.py "${BURST_DIR}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" --method ECC --filter_contrast)
+            log "$auto_stack"
 
+            log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\""
             exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}"
 
+            log "finalize_image \"${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_combined\""
             finalize_image "${BURST_DIR}/main_combined.${INTERNAL_EXTENSION}" "${TARGET_NAME}_combined"
         fi
-
+        log "Complete"
         echo "${TARGET_NAME}.${OUTPUT_EXTENSION}"
     else
         cp "${MAIN_PICTURE}.${TIFF_EXT}" "${TARGET_NAME}.tiff"
@@ -145,7 +176,7 @@ if [ -n "$DCRAW" ]; then
 fi
 
 # Clean up the temp dir containing the burst
-rm -rf "$BURST_DIR"
+#rm -rf "$BURST_DIR"
 
 # Clean up the .dng if the user didn't want it
 if [ "$SAVE_DNG" -eq "0" ]; then
