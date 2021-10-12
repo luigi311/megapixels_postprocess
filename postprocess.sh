@@ -87,6 +87,9 @@ SUPER_RESOLUTION=1
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
 FUNCTION="main"
 
+log "Starting post-processing"
+log "/etc/megapixels/postprocess.sh ${1} ${2} ${3}"
+
 # Copy the first frame of the burst as the raw photo
 cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
 
@@ -161,7 +164,7 @@ if [ -n "$DCRAW" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="podman run -v \"${BURST_DIR}:/mnt\" --rm docker.io/luigi311/low-power-image-processing:latest auto_stack"
+                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm docker.io/luigi311/low-power-image-processing:latest auto_stack"
                     PREFIX="/mnt"
                 fi
 
@@ -169,7 +172,8 @@ if [ -n "$DCRAW" ]; then
                 OUTPUT_IMAGE="${PREFIX}/main_processed.${INTERNAL_EXTENSION}"
 
                 log "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast"
-                $COMMAND "${INPUT_FOLDER}" "${OUTPUT_IMAGE}" --method ECC --filter_contrast
+                MESSAGE=$($COMMAND "${INPUT_FOLDER}" "${OUTPUT_IMAGE}" --method ECC --filter_contrast 2>&1)
+                log "$MESSAGE"
 
                 log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
                 exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
@@ -190,17 +194,20 @@ if [ -n "$DCRAW" ]; then
 
                 if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py"
+                    MODEL_PATH="--model_path \"${HOME}/.models\""
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="podman run -v \"${BURST_DIR}:/mnt\" --rm docker.io/luigi311/low-power-image-processing:latest opencv_super_resolution"
+                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm docker.io/luigi311/low-power-image-processing:latest opencv_super_resolution"
+                    MODEL_PATH=""
                     PREFIX="/mnt"
                 fi
 
                 INPUT_IMAGE="${PREFIX}/${INPUT_IMAGE}"
                 OUTPUT_IMAGE="${PREFIX}/main_processed2.${INTERNAL_EXTENSION}"
 
-                log "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 --model_path \"${HOME}/.models\""
-                $COMMAND "${INPUT_IMAGE}" "${OUTPUT_IMAGE}" --method ESPCN --scale 2 --model_path "${HOME}/.models"
+                log "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH}"
+                MESSAGE=$($COMMAND "${INPUT_IMAGE}" "${OUTPUT_IMAGE}" --method ESPCN --scale 2 ${MODEL_PATH}  2>&1)
+                log "$MESSAGE"
 
                 mv "${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
 
