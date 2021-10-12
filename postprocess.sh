@@ -223,7 +223,7 @@ if [ -n "$DCRAW" ]; then
 fi
 
 # Clean up the temp dir containing the burst
-#rm -rf "$BURST_DIR"
+rm -rf "$BURST_DIR"
 
 # Clean up the .dng if the user didn't want it
 if [ "$SAVE_DNG" -eq "0" ]; then
