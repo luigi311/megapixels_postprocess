@@ -11,6 +11,8 @@ rm -rf /etc/megapixels/postprocess.sh /etc/megapixels/Low-Power-Image-Processing
 
 ln -s "${PWD}/postprocess.sh" /etc/megapixels/postprocess.sh
 
+chmod 777 /etc/megapixels/postprocess.sh
+
 if ! command -v "podman" >/dev/null; then
     pacman -S podman --noconfirm
 fi
