@@ -4,13 +4,19 @@ This is a custom postprocess.sh script to be used for [megapixels](https://git.s
 
 ## Usage
 
-Clone the repo and copy the postprocess.sh to /etc/megapixels/postprocess.sh
-
-The biggest benefit to this is image stacking to reduce the amount of noise in the image by combining the burst images taken by megapixels. To use this feature you need to clone the repo <https://github.com/luigi311/Low-Power-Image-Processing> in the same directory /etc/megapixels/
-The script requires opencv to be installed globally such as with
+Clone the repo and run the following commands:
 
 ```bash
-sudo pip install opencv-python-headless
+chmod +x setup.sh
+chmox +x setup2.sh
+./setup.sh
 ```
 
-A full run with stacking and all comes in at around 1 minute on the pinephone and should be around 30 seconds without the stacking.
+You must run the scripts as the user that will use megapixels as that user will be added to the rootless podman setup.
+It will then restart the machine to finish configuring podman. You will then need to run
+
+```bash
+./setup2.sh
+```
+
+Which will download the docker image to use so it does not have to download it when it first runs the script.

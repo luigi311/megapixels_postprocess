@@ -144,8 +144,8 @@ if [ -n "$DCRAW" ]; then
         finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
 
         if [ "$AUTO_STACK" -eq 1 ]; then
-            # Proceed if python scripts exist or if docker is installed
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "docker" >/dev/null; then
+            # Proceed if python scripts exist or if podman is installed
+            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "podman" >/dev/null; then
                 FUNCTION="auto_stack"
                 log "Starting auto stack process"
                 for FILE in "${BURST_DIR}"/*.dng; do
@@ -161,7 +161,7 @@ if [ -n "$DCRAW" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="docker run -v \"${BURST_DIR}:/mnt\" --rm luigi311/low-power-image-processing:latest auto_stack"
+                    COMMAND="podman run -v \"${BURST_DIR}:/mnt\" --rm docker.io/luigi311/low-power-image-processing:latest auto_stack"
                     PREFIX="/mnt"
                 fi
 
@@ -179,7 +179,7 @@ if [ -n "$DCRAW" ]; then
         fi
 
         if [ "$SUPER_RESOLUTION" -eq 1 ]; then
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] || command -v "docker" >/dev/null; then
+            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] || command -v "podman" >/dev/null; then
                 FUNCTION="super_resolution"
                 log "Starting super resolution process"
                 if [ "$PROCESSED" -eq 1 ]; then
@@ -192,7 +192,7 @@ if [ -n "$DCRAW" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py"
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="docker run -v \"${BURST_DIR}:/mnt\" --rm luigi311/low-power-image-processing:latest opencv_super_resolution"
+                    COMMAND="podman run -v \"${BURST_DIR}:/mnt\" --rm docker.io/luigi311/low-power-image-processing:latest opencv_super_resolution"
                     PREFIX="/mnt"
                 fi
 
