@@ -7,7 +7,7 @@ USER=$(whoami)
 # su to root if not already root
 [ "$(whoami)" = root ] || exec sudo su -c "$0" root
 
-rm -rf /etc/megapixels/postprocess.sh /etc/megapixels/Low-Power-Image-Processing
+rm -rf /etc/megapixels/postprocess.sh
 
 ln -s "${PWD}/postprocess.sh" /etc/megapixels/postprocess.sh
 
@@ -31,6 +31,5 @@ if ! grep -q "^$USER:" /etc/subgid || ! grep -q "^$USER:" /etc/subuid; then
     # Add $USER to /etc/subgid
     echo "Adding ${USER} to /etc/subgid"
     usermod --add-subuids 200000-201000 --add-subgids 200000-201000 "$USER"
+    echo "Setup complete, reboot machine"
 fi
-
-reboot
