@@ -84,7 +84,6 @@ MAIN_PICTURE="${BURST_DIR}/1"
 PROCESSED=0 # Flag to check if processed files are present
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable
-AUTO_STACK_DCRAW=0 # Flag to check if DCRAW has already occured for auto stack
 SUPER_RESOLUTION=1 # Enable Super Resolution, set to 0 to disable
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
