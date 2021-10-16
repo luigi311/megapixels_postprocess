@@ -77,15 +77,18 @@ fi
 BURST_DIR="${1%/}"
 TARGET_NAME="$2"
 SAVE_DNG="$3"
-INTERNAL_EXTENSION="png"
-EXTERNAL_EXTENSION="png"
+INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
+EXTERNAL_EXTENSION="png" # Final image extension to output the final image
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
-PROCESSED=0
-AUTO_STACK=1
-SUPER_RESOLUTION=1
+PROCESSED=0 # Flag to check if processed files are present
+DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
+AUTO_STACK=1 # Enable auto stacking, set to 0 to disable
+AUTO_STACK_DCRAW=0 # Flag to check if DCRAW has already occured for auto stack
+SUPER_RESOLUTION=1 # Enable Super Resolution, set to 0 to disable
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
-FUNCTION="main"
+DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
+FUNCTION="main" # Variable to hold the stage of the script for log output
 
 log "Starting post-processing"
 log "/etc/megapixels/postprocess.sh ${1} ${2} ${3}"
@@ -146,15 +149,55 @@ if [ -n "$DCRAW" ]; then
         log "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
 
+        if [ "$DENOISE" -eq 1 ]; then
+            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/denoise/denoise.py" ] || command -v "podman" >/dev/null; then
+                FUNCTION="denoise"
+                log "Starting denoise process"
+                if [ "$AUTO_STACK" -eq 1 ]; then
+                    for FILE in "${BURST_DIR}"/*.dng; do
+                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
+                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
+                    done
+                else
+                    log "$DCRAW +M -H 4 -o 1 -q 3 -T ${MAIN_PICTURE}.dng"
+                    $DCRAW +M -H 4 -o 1 -q 3 -T "${MAIN_PICTURE}.dng"
+                fi
+                
+                # Remove original main conversion so it is not included in the stacking
+                log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
+                rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+
+                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py" ]; then
+                    COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py"
+                    PREFIX="${BURST_DIR}"
+                    MODEL_PATH="--model_path \"${HOME}/.models\""
+                else
+                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} ffdnet"
+                    PREFIX="/mnt"
+                    MODEL_PATH=""
+                fi
+
+                INPUT_FOLDER="${PREFIX}"
+
+                log "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH}"
+                MESSAGE=$($COMMAND "${INPUT_FOLDER}" --noise 10 --model "ffdnet_color" ${MODEL_PATH} 2>&1)
+                log "$MESSAGE"
+            fi
+        fi
+
         if [ "$AUTO_STACK" -eq 1 ]; then
             # Proceed if python scripts exist or if podman is installed
             if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "podman" >/dev/null; then
                 FUNCTION="auto_stack"
                 log "Starting auto stack process"
-                for FILE in "${BURST_DIR}"/*.dng; do
-                    log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
-                    $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
-                done
+                
+                # Check if denoise was not ran as that will dcraw the images first
+                if [ ! "$DENOISE" -eq 1 ]; then
+                    for FILE in "${BURST_DIR}"/*.dng; do
+                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
+                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
+                    done
+                fi
 
                 # Remove original main conversion so it is not included in the stacking
                 log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
@@ -164,7 +207,7 @@ if [ -n "$DCRAW" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm docker.io/luigi311/low-power-image-processing:latest auto_stack"
+                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} auto_stack"
                     PREFIX="/mnt"
                 fi
 
@@ -197,7 +240,7 @@ if [ -n "$DCRAW" ]; then
                     MODEL_PATH="--model_path \"${HOME}/.models\""
                     PREFIX="${BURST_DIR}"
                 else
-                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm docker.io/luigi311/low-power-image-processing:latest opencv_super_resolution"
+                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} opencv_super_resolution"
                     MODEL_PATH=""
                     PREFIX="/mnt"
                 fi
