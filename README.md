@@ -7,8 +7,7 @@ This is a custom postprocess.sh script to be used for [megapixels](https://git.s
 Clone the repo and run the following commands:
 
 ```bash
-chmod +x setup.sh
-chmox +x setup2.sh
+chmod +x *.sh
 ./setup.sh
 ```
 
@@ -16,7 +15,7 @@ You must run the scripts as the user that will use megapixels as that user will 
 It will then restart the machine to finish configuring podman. You will then need to run
 
 ```bash
-./setup2.sh
+./download_container.sh
 ```
 
 Which will download the docker image to use so it does not have to download it when it first runs the script.
