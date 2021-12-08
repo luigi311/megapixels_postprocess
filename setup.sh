@@ -7,9 +7,15 @@ setup_main() {
 
     if ! command -v "podman" >/dev/null; then
         if command -v "pacman" >/dev/null; then
-            pacman -S podman --noconfirm
+            pacman -Sy podman --noconfirm
         elif command -v "apk" >/dev/null; then
-            apk add podman
+            apk update
+            apk add podman fuse-overlayfs shadow slirp4netns modprobe tun
+            rc-update add cgroups
+            rc-service cgroups start
+            usermod --add-subuids 100000-165535 "${PASSED_USER}"
+            usermod --add-subgids 100000-165535 "${PASSED_USER}"
+            podman system migrate
         else
             echo "Unknown package manager, podman needs to be install via your preferred method"
         fi
