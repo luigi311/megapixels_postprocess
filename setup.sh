@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -13,6 +13,7 @@ setup_main() {
             apk add podman fuse-overlayfs shadow slirp4netns modprobe tun
             rc-update add cgroups
             rc-service cgroups start
+            modprobe tun
             usermod --add-subuids 100000-165535 "${PASSED_USER}"
             usermod --add-subgids 100000-165535 "${PASSED_USER}"
             podman system migrate

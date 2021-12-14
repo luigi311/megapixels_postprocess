@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 # The post-processing script gets called after taking a burst of
 # pictures into a temporary directory. The first argument is the
