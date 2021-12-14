@@ -1,22 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
 setup_main() {
     PASSED_USER="$1"
-    rm -rf /etc/megapixels/postprocess.sh
-
-    mkdir -p /etc/megapixels
-
-    ln -s "${PWD}/postprocess.sh" /etc/megapixels/postprocess.sh
-
-    chmod 777 /etc/megapixels/postprocess.sh
 
     if ! command -v "podman" >/dev/null; then
         if command -v "pacman" >/dev/null; then
-            pacman -S podman --noconfirm
+            pacman -Sy podman --noconfirm
         elif command -v "apk" >/dev/null; then
-            apk add podman
+            apk update
+            apk add podman fuse-overlayfs shadow slirp4netns modprobe tun
+            rc-update add cgroups
+            rc-service cgroups start
+            modprobe tun
+            usermod --add-subuids 100000-165535 "${PASSED_USER}"
+            usermod --add-subgids 100000-165535 "${PASSED_USER}"
+            podman system migrate
         else
             echo "Unknown package manager, podman needs to be install via your preferred method"
         fi
@@ -39,6 +39,14 @@ setup_main() {
     fi
 }
 
+
+mkdir -p "${HOME}/.config/megapixels"
+
+rm -rf "${HOME}/.config/megapixels/postprocess.sh"
+
+ln -s "${PWD}/postprocess.sh" "${HOME}/.config/megapixels/postprocess.sh"
+
+chmod +x "${HOME}/.config/megapixels/postprocess.sh"
 
 export -f setup_main
 FUNC=$(declare -f setup_main)
