@@ -64,21 +64,36 @@ finalize_image() {
     if [ "$EXTERNAL_EXTENSION" = "jxl" ]; then
         if command -v "cjxl" >/dev/null; then
             OUTPUT_EXTENSION="jxl"
-            cjxl "$1" "${2}.${OUTPUT_EXTENSION}"
+            cjxl -q 95 "${1}" "${2}.${OUTPUT_EXTENSION}"
         else
             FALLBACK=1
         fi
-    elif [ "$EXTERNAL_EXTENSION" = "png" ]; then
+    elif [ "$EXTERNAL_EXTENSION" = "avif" ]; then
+        if command -v "cavif" >/dev/null; then
+            IMAGE="${1%.*}"
+
+            # if internal extension is no png then convert to png first due to cavif limits
+            if [ "$INTERNAL_EXTENSION" != "png" ]; then
+                convert "${1}" "${IMAGE}.png"
+                INPUT_EXTENSION="png"
+            fi
+
+            OUTPUT_EXTENSION="avif"
+            cavif -f -s 6 -Q 80 "${IMAGE}.png" -o "${2}.avif"
+        else
+            FALLBACK=1
+        fi
+    elif [ "$EXTERNAL_EXTENSION" = "png" ] && [ "$INTERNAL_EXTENSION" = "png" ]; then
         OUTPUT_EXTENSION="png"
-        cp "$1" "${2}.png"
+        cp "${1}" "${2}.png"
     else
         OUTPUT_EXTENSION="$EXTERNAL_EXTENSION"
-        convert "$1" "${2}.${OUTPUT_EXTENSION}"
+        convert "${1}" "${2}.${OUTPUT_EXTENSION}"
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
         OUTPUT_EXTENSION="png"
-        cp "$1" "${2}.png"
+        cp "${1}" "${2}.png"
     fi
 }
 
@@ -107,14 +122,14 @@ DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
 FUNCTION="main" # Variable to hold the stage of the script for log output
 
 log "Starting post-processing"
-log "/etc/megapixels/postprocess.sh ${1} ${2} ${3}"
+log "${0} ${1} ${2} ${3}"
 
 # Copy the first frame of the burst as the raw photo
 cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
 
 # If using all_in_one
 if [ "${ALL_IN_ONE}" -eq 1 ]; then
-    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ] || command -v "podman" >/dev/null; then
+    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
         FUNCTION="all_in_one"
         log "Starting all_in_one"
         ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION}"
