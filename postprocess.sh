@@ -40,7 +40,7 @@ trap_die() {
     EXIT_CODE="$?"
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Exiting with code ${EXIT_CODE}"
-        #rm -f "${LOGFILE:?}"
+        rm -f "${LOGFILE:?}"
     else
         MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
         log "${MESSAGE}"
@@ -306,7 +306,7 @@ else
 fi
 
 # Clean up the temp dir containing the burst
-#rm -rf "${BURST_DIR}"
+rm -rf "${BURST_DIR}"
 
 # Clean up the .dng if the user didn't want it
 if [ "${SAVE_DNG}" -eq "0" ]; then
