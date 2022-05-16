@@ -42,7 +42,7 @@ setup_main() {
 
 mkdir -p "${HOME}/.config/megapixels"
 
-rm -rf "${HOME}/.config/megapixels/postprocess.sh"
+rm -f "${HOME}/.config/megapixels/postprocess.sh"
 
 ln -s "${PWD}/postprocess.sh" "${HOME}/.config/megapixels/postprocess.sh"
 
