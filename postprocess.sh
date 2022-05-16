@@ -95,8 +95,11 @@ EXTERNAL_EXTENSION="png" # Final image extension to output the final image
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
 PROCESSED=0 # Flag to check if processed files are present
+DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
+DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
+COLOR=1 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
 ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
@@ -121,8 +124,23 @@ if [ "${ALL_IN_ONE}" -eq 1 ]; then
             PROCESSED=1
         fi
 
+        if [ "${DEHAZE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
+            PROCESSED=1
+        fi
+
+        if [ "${DENOISE_ALL}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
+            PROCESSED=1
+        fi
+
         if [ "${DENOISE}" -eq 1 ]; then
             ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_method fast --denoise_amount 2"
+            PROCESSED=1
+        fi
+
+        if [ "${COLOR}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
             PROCESSED=1
         fi
 
@@ -193,110 +211,6 @@ else
 
             run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
             run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-
-            if [ "${DENOISE}" -eq 1 ]; then
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/denoise/denoise.py" ] || command -v "podman" >/dev/null; then
-                    FUNCTION="denoise"
-                    log "Starting denoise process"
-                    if [ "$AUTO_STACK" -eq 1 ]; then
-                        for FILE in "${BURST_DIR}"/*.dng; do
-                            run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${FILE}\""
-                        done
-                    else
-                        run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${MAIN_PICTURE}.dng\""
-                    fi
-                    
-                    # Remove original main conversion so it is not included in the stacking
-                    log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                    run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-
-                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py" ]; then
-                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py"
-                        PREFIX="${BURST_DIR}"
-                        MODEL_PATH="--model_path \"${HOME}/.models\""
-                    else
-                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} ffdnet"
-                        PREFIX="/mnt"
-                        MODEL_PATH=""
-                    fi
-
-                    INPUT_FOLDER="${PREFIX}"
-
-                    run "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH} 2>&1"
-                fi
-            fi
-
-            if [ "$AUTO_STACK" -eq 1 ]; then
-                # Proceed if python scripts exist or if podman is installed
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "podman" >/dev/null; then
-                    FUNCTION="auto_stack"
-                    log "Starting auto stack process"
-                    
-                    # Check if denoise was not ran as that will dcraw the images first
-                    if [ ! "$DENOISE" -eq 1 ]; then
-                        for FILE in "${BURST_DIR}"/*.dng; do
-                            run "${DCRAW} +M -H 4 -o 1 -q 3 -T \"${FILE}\""
-                        done
-                    fi
-
-                    # Remove original main conversion so it is not included in the stacking
-                    log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                    run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-
-                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ]; then
-                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
-                        PREFIX="${BURST_DIR}"
-                    else
-                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} auto_stack"
-                        PREFIX="/mnt"
-                    fi
-
-                    INPUT_FOLDER="${PREFIX}"
-                    OUTPUT_IMAGE="${PREFIX}/main_processed.${INTERNAL_EXTENSION}"
-
-                    run "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast 2>&1"
-
-                    run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
-
-                    PROCESSED=1
-                fi
-            fi
-
-            if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] || command -v "podman" >/dev/null; then
-                    FUNCTION="super_resolution"
-                    log "Starting super resolution process"
-                    if [ "${PROCESSED}" -eq 1 ]; then
-                        INPUT_IMAGE="main_processed.${INTERNAL_EXTENSION}"
-                    else
-                        INPUT_IMAGE="main.${INTERNAL_EXTENSION}"
-                    fi
-
-                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ]; then
-                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py"
-                        MODEL_PATH="--model_path \"${HOME}/.models\""
-                        PREFIX="${BURST_DIR}"
-                    else
-                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} opencv_super_resolution"
-                        MODEL_PATH=""
-                        PREFIX="/mnt"
-                    fi
-
-                    INPUT_IMAGE="${PREFIX}/${INPUT_IMAGE}"
-                    OUTPUT_IMAGE="${PREFIX}/main_processed2.${INTERNAL_EXTENSION}"
-
-                    run "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH} 2>&1"
-
-                    run "mv \"${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
-
-                    PROCESSED=1
-                fi
-            fi
-
-            FUNCTION="main"
-            if [ "$PROCESSED" -eq 1 ]; then
-                run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-            fi
 
             log "Complete"
         else
