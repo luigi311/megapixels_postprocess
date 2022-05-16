@@ -22,13 +22,25 @@ trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
 trap 'trap_die' EXIT
 
 log() {
-    printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1" >>"${LOGFILE}"
+    printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1" >> "${LOGFILE}"
+}
+
+run() {
+    # Run and time command down to the millisecond
+    log "Running: $*"
+    local start=$(date +%s%3N)
+    local ret=$(eval "$1" 2>&1)
+    local end=$(date +%s%3N)
+    local duration=$((end - start))
+    log "Command took $duration milliseconds"
+    log "Returned: $ret"
 }
 
 trap_die() {
     EXIT_CODE="$?"
     if [ "${EXIT_CODE}" -eq 0 ]; then
-        rm -f "${LOGFILE:?}"
+        log "Exiting with code ${EXIT_CODE}"
+        #rm -f "${LOGFILE:?}"
     else
         MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
         log "${MESSAGE}"
@@ -101,22 +113,21 @@ TIFF_EXT="dng.tiff"
 if command -v "dcraw_emu" >/dev/null; then
     DCRAW=dcraw_emu
     # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
+    denoise="-fbdd 1"
 elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
     DCRAW=/usr/lib/libraw/dcraw_emu
     # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
+    denoise="-fbdd 1"
 elif command -v "dcraw" >/dev/null; then
     DCRAW=dcraw
     TIFF_EXT="tiff"
-    set --
 fi
 
 CONVERT=""
 if command -v "convert" >/dev/null; then
     CONVERT="convert"
     # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
+    denoise="-fbdd 1"
 elif command -v "gm" >/dev/null; then
     CONVERT="gm"
 fi
@@ -128,25 +139,20 @@ if [ -n "$DCRAW" ]; then
     # -o 1		Output in sRGB colorspace
     # -q 3		Debayer with AHD algorithm
     # -T		Output TIFF
-    log "$DCRAW +M -H 4 -o 1 -q 3 -T \"$*\" \"${MAIN_PICTURE}.dng\""
-    $DCRAW +M -H 4 -o 1 -q 3 -T "$@" "${MAIN_PICTURE}.dng"
+    
+    run "$DCRAW +M -H 4 -o 1 -q 3 -T ${denoise} \"${MAIN_PICTURE}.dng\""
 
     # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
     if [ -n "$CONVERT" ]; then
         if [ "$CONVERT" = "convert" ]; then
-            log "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 -sigmoidal-contrast 6,50% "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+            run "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
         else
             # sadly sigmoidal contrast is not available in imagemagick
-            log "Sigmoidal contrast not avaliable convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            gm convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+            run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
         fi
 
-        log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-        exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
-
-        log "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-        finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
+        run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+        run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
 
         if [ "$DENOISE" -eq 1 ]; then
             if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/denoise/denoise.py" ] || command -v "podman" >/dev/null; then
@@ -154,17 +160,15 @@ if [ -n "$DCRAW" ]; then
                 log "Starting denoise process"
                 if [ "$AUTO_STACK" -eq 1 ]; then
                     for FILE in "${BURST_DIR}"/*.dng; do
-                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
-                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
+                        run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${FILE}\""
                     done
                 else
-                    log "$DCRAW +M -H 4 -o 1 -q 3 -T ${MAIN_PICTURE}.dng"
-                    $DCRAW +M -H 4 -o 1 -q 3 -T "${MAIN_PICTURE}.dng"
+                    run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${MAIN_PICTURE}.dng\""
                 fi
                 
                 # Remove original main conversion so it is not included in the stacking
                 log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+                run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
 
                 if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py"
@@ -178,9 +182,7 @@ if [ -n "$DCRAW" ]; then
 
                 INPUT_FOLDER="${PREFIX}"
 
-                log "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH}"
-                MESSAGE=$($COMMAND "${INPUT_FOLDER}" --noise 10 --model "ffdnet_color" ${MODEL_PATH} 2>&1)
-                log "$MESSAGE"
+                run "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH} 2>&1"
             fi
         fi
 
@@ -193,14 +195,13 @@ if [ -n "$DCRAW" ]; then
                 # Check if denoise was not ran as that will dcraw the images first
                 if [ ! "$DENOISE" -eq 1 ]; then
                     for FILE in "${BURST_DIR}"/*.dng; do
-                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
-                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
+                        run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${FILE}\""
                     done
                 fi
 
                 # Remove original main conversion so it is not included in the stacking
                 log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+                run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
 
                 if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ]; then
                     COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
@@ -213,12 +214,9 @@ if [ -n "$DCRAW" ]; then
                 INPUT_FOLDER="${PREFIX}"
                 OUTPUT_IMAGE="${PREFIX}/main_processed.${INTERNAL_EXTENSION}"
 
-                log "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast"
-                MESSAGE=$($COMMAND "${INPUT_FOLDER}" "${OUTPUT_IMAGE}" --method ECC --filter_contrast 2>&1)
-                log "$MESSAGE"
+                run "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast 2>&1"
 
-                log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
-                exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
+                run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
 
                 PROCESSED=1
             fi
@@ -247,11 +245,9 @@ if [ -n "$DCRAW" ]; then
                 INPUT_IMAGE="${PREFIX}/${INPUT_IMAGE}"
                 OUTPUT_IMAGE="${PREFIX}/main_processed2.${INTERNAL_EXTENSION}"
 
-                log "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH}"
-                MESSAGE=$($COMMAND "${INPUT_IMAGE}" "${OUTPUT_IMAGE}" --method ESPCN --scale 2 ${MODEL_PATH}  2>&1)
-                log "$MESSAGE"
+                run "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH} 2>&1"
 
-                mv "${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
+                run "mv \"${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
 
                 PROCESSED=1
             fi
@@ -259,22 +255,19 @@ if [ -n "$DCRAW" ]; then
 
         FUNCTION="main"
         if [ "$PROCESSED" -eq 1 ]; then
-            log "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-            finalize_image "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}" "${TARGET_NAME}_processed"
+            run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
 
         log "Complete"
     else
-        cp "${MAIN_PICTURE}.${TIFF_EXT}" "${TARGET_NAME}.tiff"
-
-        echo "${TARGET_NAME}.tiff"
+        run "cp \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${TARGET_NAME}.tiff\""
     fi
 fi
 
 # Clean up the temp dir containing the burst
-rm -rf "$BURST_DIR"
+#rm -rf "$BURST_DIR"
 
 # Clean up the .dng if the user didn't want it
 if [ "$SAVE_DNG" -eq "0" ]; then
-    rm "$TARGET_NAME.dng"
+    run "rm \"$TARGET_NAME.dng\""
 fi
