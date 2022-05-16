@@ -7,7 +7,7 @@ setup_main() {
 
     if ! command -v "podman" >/dev/null; then
         if command -v "pacman" >/dev/null; then
-            pacman -Sy podman --noconfirm
+            pacman -Sy podman fuse-overlayfs --noconfirm
         elif command -v "apk" >/dev/null; then
             apk update
             apk add podman fuse-overlayfs shadow slirp4netns modprobe tun

@@ -22,13 +22,25 @@ trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
 trap 'trap_die' EXIT
 
 log() {
-    printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1" >>"${LOGFILE}"
+    printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1" >> "${LOGFILE}"
+}
+
+run() {
+    # Run and time command down to the millisecond
+    log "Running: $*"
+    local start=$(date +%s%3N)
+    local ret=$(eval "$1" 2>&1)
+    local end=$(date +%s%3N)
+    local duration=$((end - start))
+    log "Command took $duration milliseconds"
+    log "Returned: $ret"
 }
 
 trap_die() {
     EXIT_CODE="$?"
     if [ "${EXIT_CODE}" -eq 0 ]; then
-        rm -f "${LOGFILE:?}"
+        log "Exiting with code ${EXIT_CODE}"
+        #rm -f "${LOGFILE:?}"
     else
         MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
         log "${MESSAGE}"
@@ -74,6 +86,7 @@ if [ "$#" -ne 3 ]; then
     echo "Usage: $0 [burst-dir] [target-name] [save-dng]"
     exit 2
 fi
+MAIN_START=$(date +%s%3N)
 BURST_DIR="${1%/}"
 TARGET_NAME="$2"
 SAVE_DNG="$3"
@@ -85,6 +98,7 @@ PROCESSED=0 # Flag to check if processed files are present
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
+ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
 FUNCTION="main" # Variable to hold the stage of the script for log output
@@ -95,186 +109,210 @@ log "/etc/megapixels/postprocess.sh ${1} ${2} ${3}"
 # Copy the first frame of the burst as the raw photo
 cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
 
-# Create a .jpg if raw processing tools are installed
-DCRAW=""
-TIFF_EXT="dng.tiff"
-if command -v "dcraw_emu" >/dev/null; then
-    DCRAW=dcraw_emu
-    # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
-elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
-    DCRAW=/usr/lib/libraw/dcraw_emu
-    # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
-elif command -v "dcraw" >/dev/null; then
-    DCRAW=dcraw
-    TIFF_EXT="tiff"
-    set --
-fi
+# If using all_in_one
+if [ "${ALL_IN_ONE}" -eq 1 ]; then
+    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ] || command -v "podman" >/dev/null; then
+        FUNCTION="all_in_one"
+        log "Starting all_in_one"
+        ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION}"
 
-CONVERT=""
-if command -v "convert" >/dev/null; then
-    CONVERT="convert"
-    # -fbdd 1	Raw denoising with FBDD
-    set -- -fbdd 1
-elif command -v "gm" >/dev/null; then
-    CONVERT="gm"
-fi
+        if [ "${AUTO_STACK}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC"
+            PROCESSED=1
+        fi
 
-if [ -n "$DCRAW" ]; then
-    # $DCRAW FLAGS
-    # +M		use embedded color matrix
-    # -H 4		Recover highlights by rebuilding them
-    # -o 1		Output in sRGB colorspace
-    # -q 3		Debayer with AHD algorithm
-    # -T		Output TIFF
-    log "$DCRAW +M -H 4 -o 1 -q 3 -T \"$*\" \"${MAIN_PICTURE}.dng\""
-    $DCRAW +M -H 4 -o 1 -q 3 -T "$@" "${MAIN_PICTURE}.dng"
+        if [ "${DENOISE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_method fast --denoise_amount 2"
+            PROCESSED=1
+        fi
 
-    # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
-    if [ -n "$CONVERT" ]; then
-        if [ "$CONVERT" = "convert" ]; then
-            log "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 -sigmoidal-contrast 6,50% "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+        if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
+            PROCESSED=1
+        fi
+
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
+            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
+            INPUT_FOLDER="${BURST_DIR}"
         else
-            # sadly sigmoidal contrast is not available in imagemagick
-            log "Sigmoidal contrast not avaliable convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            gm convert "${MAIN_PICTURE}.${TIFF_EXT}" -sharpen 0x1.0 "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+            COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} all_in_one"
+            INPUT_FOLDER="/mnt"
         fi
 
-        log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-        exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
+        run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
 
-        log "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-        finalize_image "${BURST_DIR}/main.${INTERNAL_EXTENSION}" "${TARGET_NAME}"
-
-        if [ "$DENOISE" -eq 1 ]; then
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/denoise/denoise.py" ] || command -v "podman" >/dev/null; then
-                FUNCTION="denoise"
-                log "Starting denoise process"
-                if [ "$AUTO_STACK" -eq 1 ]; then
-                    for FILE in "${BURST_DIR}"/*.dng; do
-                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
-                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
-                    done
-                else
-                    log "$DCRAW +M -H 4 -o 1 -q 3 -T ${MAIN_PICTURE}.dng"
-                    $DCRAW +M -H 4 -o 1 -q 3 -T "${MAIN_PICTURE}.dng"
-                fi
-                
-                # Remove original main conversion so it is not included in the stacking
-                log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
-
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py" ]; then
-                    COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py"
-                    PREFIX="${BURST_DIR}"
-                    MODEL_PATH="--model_path \"${HOME}/.models\""
-                else
-                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} ffdnet"
-                    PREFIX="/mnt"
-                    MODEL_PATH=""
-                fi
-
-                INPUT_FOLDER="${PREFIX}"
-
-                log "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH}"
-                MESSAGE=$($COMMAND "${INPUT_FOLDER}" --noise 10 --model "ffdnet_color" ${MODEL_PATH} 2>&1)
-                log "$MESSAGE"
-            fi
-        fi
-
-        if [ "$AUTO_STACK" -eq 1 ]; then
-            # Proceed if python scripts exist or if podman is installed
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "podman" >/dev/null; then
-                FUNCTION="auto_stack"
-                log "Starting auto stack process"
-                
-                # Check if denoise was not ran as that will dcraw the images first
-                if [ ! "$DENOISE" -eq 1 ]; then
-                    for FILE in "${BURST_DIR}"/*.dng; do
-                        log "$DCRAW +M -H 4 -o 1 -q 3 -T ${FILE}"
-                        $DCRAW +M -H 4 -o 1 -q 3 -T "${FILE}"
-                    done
-                fi
-
-                # Remove original main conversion so it is not included in the stacking
-                log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
-                rm -f "${BURST_DIR}/main.${INTERNAL_EXTENSION}"
-
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ]; then
-                    COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
-                    PREFIX="${BURST_DIR}"
-                else
-                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} auto_stack"
-                    PREFIX="/mnt"
-                fi
-
-                INPUT_FOLDER="${PREFIX}"
-                OUTPUT_IMAGE="${PREFIX}/main_processed.${INTERNAL_EXTENSION}"
-
-                log "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast"
-                MESSAGE=$($COMMAND "${INPUT_FOLDER}" "${OUTPUT_IMAGE}" --method ECC --filter_contrast 2>&1)
-                log "$MESSAGE"
-
-                log "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
-                exiftool_function "${MAIN_PICTURE}.${TIFF_EXT}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
-
-                PROCESSED=1
-            fi
-        fi
-
-        if [ "$SUPER_RESOLUTION" -eq 1 ]; then
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] || command -v "podman" >/dev/null; then
-                FUNCTION="super_resolution"
-                log "Starting super resolution process"
-                if [ "$PROCESSED" -eq 1 ]; then
-                    INPUT_IMAGE="main_processed.${INTERNAL_EXTENSION}"
-                else
-                    INPUT_IMAGE="main.${INTERNAL_EXTENSION}"
-                fi
-
-                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ]; then
-                    COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py"
-                    MODEL_PATH="--model_path \"${HOME}/.models\""
-                    PREFIX="${BURST_DIR}"
-                else
-                    COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} opencv_super_resolution"
-                    MODEL_PATH=""
-                    PREFIX="/mnt"
-                fi
-
-                INPUT_IMAGE="${PREFIX}/${INPUT_IMAGE}"
-                OUTPUT_IMAGE="${PREFIX}/main_processed2.${INTERNAL_EXTENSION}"
-
-                log "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH}"
-                MESSAGE=$($COMMAND "${INPUT_IMAGE}" "${OUTPUT_IMAGE}" --method ESPCN --scale 2 ${MODEL_PATH}  2>&1)
-                log "$MESSAGE"
-
-                mv "${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}" "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}"
-
-                PROCESSED=1
-            fi
-        fi
-
-        FUNCTION="main"
+        run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         if [ "$PROCESSED" -eq 1 ]; then
-            log "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-            finalize_image "${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}" "${TARGET_NAME}_processed"
+            run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
+    fi
+else
+    # Create a .jpg if raw processing tools are installed
+    DCRAW=""
+    TIFF_EXT="dng.tiff"
+    if command -v "dcraw_emu" >/dev/null; then
+        DCRAW=dcraw_emu
+        # -fbdd 1	Raw denoising with FBDD
+        denoise="-fbdd 1"
+    elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
+        DCRAW=/usr/lib/libraw/dcraw_emu
+        # -fbdd 1	Raw denoising with FBDD
+        denoise="-fbdd 1"
+    elif command -v "dcraw" >/dev/null; then
+        DCRAW=dcraw
+        TIFF_EXT="tiff"
+    fi
 
-        log "Complete"
-    else
-        cp "${MAIN_PICTURE}.${TIFF_EXT}" "${TARGET_NAME}.tiff"
+    CONVERT=""
+    if command -v "convert" >/dev/null; then
+        CONVERT="convert"
+        # -fbdd 1	Raw denoising with FBDD
+        denoise="-fbdd 1"
+    elif command -v "gm" >/dev/null; then
+        CONVERT="gm"
+    fi
 
-        echo "${TARGET_NAME}.tiff"
+    if [ -n "${DCRAW}" ]; then
+        # $DCRAW FLAGS
+        # +M		use embedded color matrix
+        # -H 4		Recover highlights by rebuilding them
+        # -o 1		Output in sRGB colorspace
+        # -q 3		Debayer with AHD algorithm
+        # -T		Output TIFF
+        
+        run "${DCRAW} +M -H 4 -o 1 -q 3 -T ${denoise} \"${MAIN_PICTURE}.dng\""
+
+        # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
+        if [ -n "${CONVERT}" ]; then
+            if [ "${CONVERT}" = "convert" ]; then
+                run "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+            else
+                # sadly sigmoidal contrast is not available in imagemagick
+                run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+            fi
+
+            run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+
+            if [ "${DENOISE}" -eq 1 ]; then
+                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/denoise/denoise.py" ] || command -v "podman" >/dev/null; then
+                    FUNCTION="denoise"
+                    log "Starting denoise process"
+                    if [ "$AUTO_STACK" -eq 1 ]; then
+                        for FILE in "${BURST_DIR}"/*.dng; do
+                            run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${FILE}\""
+                        done
+                    else
+                        run "$DCRAW +M -H 4 -o 1 -q 3 -T \"${MAIN_PICTURE}.dng\""
+                    fi
+                    
+                    # Remove original main conversion so it is not included in the stacking
+                    log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
+                    run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+
+                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py" ]; then
+                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/denoise/ffdnet/ffdnet.py"
+                        PREFIX="${BURST_DIR}"
+                        MODEL_PATH="--model_path \"${HOME}/.models\""
+                    else
+                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} ffdnet"
+                        PREFIX="/mnt"
+                        MODEL_PATH=""
+                    fi
+
+                    INPUT_FOLDER="${PREFIX}"
+
+                    run "${COMMAND} \"${INPUT_FOLDER}\" --noise 10 --model \"ffdnet_color\" ${MODEL_PATH} 2>&1"
+                fi
+            fi
+
+            if [ "$AUTO_STACK" -eq 1 ]; then
+                # Proceed if python scripts exist or if podman is installed
+                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ] || command -v "podman" >/dev/null; then
+                    FUNCTION="auto_stack"
+                    log "Starting auto stack process"
+                    
+                    # Check if denoise was not ran as that will dcraw the images first
+                    if [ ! "$DENOISE" -eq 1 ]; then
+                        for FILE in "${BURST_DIR}"/*.dng; do
+                            run "${DCRAW} +M -H 4 -o 1 -q 3 -T \"${FILE}\""
+                        done
+                    fi
+
+                    # Remove original main conversion so it is not included in the stacking
+                    log "Removing: ${BURST_DIR}/main.${INTERNAL_EXTENSION} to prevent double stacking"
+                    run "rm -f \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+
+                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py" ]; then
+                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/stacking/auto_stack/auto_stack.py"
+                        PREFIX="${BURST_DIR}"
+                    else
+                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} auto_stack"
+                        PREFIX="/mnt"
+                    fi
+
+                    INPUT_FOLDER="${PREFIX}"
+                    OUTPUT_IMAGE="${PREFIX}/main_processed.${INTERNAL_EXTENSION}"
+
+                    run "${COMMAND} \"${INPUT_FOLDER}\" \"${OUTPUT_IMAGE}\" --method ECC --filter_contrast 2>&1"
+
+                    run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
+
+                    PROCESSED=1
+                fi
+            fi
+
+            if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
+                if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ] || command -v "podman" >/dev/null; then
+                    FUNCTION="super_resolution"
+                    log "Starting super resolution process"
+                    if [ "${PROCESSED}" -eq 1 ]; then
+                        INPUT_IMAGE="main_processed.${INTERNAL_EXTENSION}"
+                    else
+                        INPUT_IMAGE="main.${INTERNAL_EXTENSION}"
+                    fi
+
+                    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py" ]; then
+                        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/super_resolution/opencv_super_resolution/opencv_super_resolution.py"
+                        MODEL_PATH="--model_path \"${HOME}/.models\""
+                        PREFIX="${BURST_DIR}"
+                    else
+                        COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} opencv_super_resolution"
+                        MODEL_PATH=""
+                        PREFIX="/mnt"
+                    fi
+
+                    INPUT_IMAGE="${PREFIX}/${INPUT_IMAGE}"
+                    OUTPUT_IMAGE="${PREFIX}/main_processed2.${INTERNAL_EXTENSION}"
+
+                    run "${COMMAND} \"${INPUT_IMAGE}\" \"${OUTPUT_IMAGE}\" --method ESPCN --scale 2 ${MODEL_PATH} 2>&1"
+
+                    run "mv \"${BURST_DIR}/main_processed2.${INTERNAL_EXTENSION}\" \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\""
+
+                    PROCESSED=1
+                fi
+            fi
+
+            FUNCTION="main"
+            if [ "$PROCESSED" -eq 1 ]; then
+                run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
+            fi
+
+            log "Complete"
+        else
+            run "cp \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${TARGET_NAME}.tiff\""
+        fi
     fi
 fi
 
 # Clean up the temp dir containing the burst
-rm -rf "$BURST_DIR"
+#rm -rf "${BURST_DIR}"
 
 # Clean up the .dng if the user didn't want it
-if [ "$SAVE_DNG" -eq "0" ]; then
-    rm "$TARGET_NAME.dng"
+if [ "${SAVE_DNG}" -eq "0" ]; then
+    run "rm \"${TARGET_NAME}.dng\""
 fi
+
+MAIN_END=$(date +%s%3N)
+MAIN_DURATION=$((MAIN_END - MAIN_START))
+log "Entire processing took ${MAIN_DURATION} milliseconds"
