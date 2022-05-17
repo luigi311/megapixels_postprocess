@@ -114,7 +114,7 @@ DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
 DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
-COLOR=1 # Enable color adjustments, set to 0 to disable, set to 1 to enable
+COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
 ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
@@ -135,7 +135,7 @@ if [ "${ALL_IN_ONE}" -eq 1 ]; then
         ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
 
         if [ "${AUTO_STACK}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC"
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
             PROCESSED=1
         fi
 
