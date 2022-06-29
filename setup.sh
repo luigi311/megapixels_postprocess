@@ -4,7 +4,6 @@ set -e
 
 setup_main() {
     PASSED_USER="$1"
-    echo $PASSED_USER
 
     if [ ! -e /etc/nsswitch.conf ]; then
         echo 'hosts: files dns' > /etc/nsswitch.conf
