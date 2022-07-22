@@ -39,11 +39,20 @@ run() {
 trap_die() {
     EXIT_CODE="$?"
     if [ "${EXIT_CODE}" -eq 0 ]; then
-        log "Exiting with code ${EXIT_CODE}"
-        rm -f "${LOGFILE:?}"
+        # Remove all instances of ${QUEUE_NAME} from /tmp/megapixels_queue.txt file
+        sed -i "/${ESCAPED_QUEUE_NAME}/d" /tmp/megapixels_queue.txt
+
+        log "Completed successfully, cleaning up"
+        #rm -f "${LOGFILE:?}"
+
+        # Clean up the temp dir containing the burst
+        rm -rf "${BURST_DIR:?}"
     else
         MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
         log "${MESSAGE}"
+
+        # Remove all instances of ${QUEUE_NAME} from /tmp/megapixels_queue.txt file
+        sed -i "/${ESCAPED_QUEUE_NAME}/d" /tmp/megapixels_queue.txt
     fi
 }
 
@@ -97,151 +106,172 @@ finalize_image() {
     fi
 }
 
+main() {
+    INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
+    EXTERNAL_EXTENSION="png" # Final image extension to output the final image
+    MAIN_PICTURE="${BURST_DIR}/1"
+    PROCESSED=0 # Flag to check if processed files are present
+    DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
+    DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
+    DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
+    AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
+    COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
+    SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
+    ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
+    LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
+    DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
+
+    log "Starting post-processing"
+    log "${0} ${1} ${2} ${3}"
+
+    # Copy the first frame of the burst as the raw photo
+    cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
+
+    # If using all_in_one
+    if [ "${ALL_IN_ONE}" -eq 1 ]; then
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
+            FUNCTION="all_in_one"
+            log "Starting all_in_one"
+            ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
+
+            if [ "${AUTO_STACK}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
+                PROCESSED=1
+            fi
+
+            if [ "${DEHAZE}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
+                PROCESSED=1
+            fi
+
+            if [ "${DENOISE_ALL}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
+                PROCESSED=1
+            fi
+
+            if [ "${DENOISE}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_method fast --denoise_amount 2"
+                PROCESSED=1
+            fi
+
+            if [ "${COLOR}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
+                PROCESSED=1
+            fi
+
+            if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
+                PROCESSED=1
+            fi
+
+            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
+                COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
+                INPUT_FOLDER="${BURST_DIR}"
+            else
+                COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} all_in_one"
+                INPUT_FOLDER="/mnt"
+            fi
+
+            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+
+            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+            if [ "$PROCESSED" -eq 1 ]; then
+                run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
+            fi
+        fi
+    else
+        # Create a .jpg if raw processing tools are installed
+        DCRAW=""
+        TIFF_EXT="dng.tiff"
+        if command -v "dcraw_emu" >/dev/null; then
+            DCRAW=dcraw_emu
+            # -fbdd 1   Raw denoising with FBDD
+            denoise="-fbdd 1"
+        elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
+            DCRAW=/usr/lib/libraw/dcraw_emu
+            # -fbdd 1   Raw denoising with FBDD
+            denoise="-fbdd 1"
+        elif command -v "dcraw" >/dev/null; then
+            DCRAW=dcraw
+            TIFF_EXT="tiff"
+        fi
+
+        CONVERT=""
+        if command -v "convert" >/dev/null; then
+            CONVERT="convert"
+            # -fbdd 1   Raw denoising with FBDD
+            denoise="-fbdd 1"
+        elif command -v "gm" >/dev/null; then
+            CONVERT="gm"
+        fi
+
+        if [ -n "${DCRAW}" ]; then
+            # $DCRAW FLAGS
+            # +M                use embedded color matrix
+            # -H 4              Recover highlights by rebuilding them
+            # -o 1              Output in sRGB colorspace
+            # -q 3              Debayer with AHD algorithm
+            # -T                Output TIFF
+
+            run "${DCRAW} +M -H 4 -o 1 -q 3 -T ${denoise} \"${MAIN_PICTURE}.dng\""
+
+            # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
+            if [ -n "${CONVERT}" ]; then
+                if [ "${CONVERT}" = "convert" ]; then
+                    run "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+                else
+                    # sadly sigmoidal contrast is not available in imagemagick
+                    run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+                fi
+
+                run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
+                run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+
+                log "Complete"
+            else
+                run "cp \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${TARGET_NAME}.tiff\""
+            fi
+        fi
+    fi
+
+    # Clean up the .dng if the user didn't want it
+    if [ "${SAVE_DNG}" -eq "0" ]; then
+        run "rm \"${TARGET_NAME}.dng\""
+    fi
+}
+
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 [burst-dir] [target-name] [save-dng]"
     exit 2
 fi
-MAIN_START=$(date +%s%3N)
+
+FUNCTION="main" # Variable to hold the stage of the script for log output
+TIMESTAMP=$(date +%s%3N)
 BURST_DIR="${1%/}"
 TARGET_NAME="$2"
 SAVE_DNG="$3"
-INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
-EXTERNAL_EXTENSION="png" # Final image extension to output the final image
 LOGFILE="${TARGET_NAME}.log"
-MAIN_PICTURE="${BURST_DIR}/1"
-PROCESSED=0 # Flag to check if processed files are present
-DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
-DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
-DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
-AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
-COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
-SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
-ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
-LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
-DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
-FUNCTION="main" # Variable to hold the stage of the script for log output
 
-log "Starting post-processing"
-log "${0} ${1} ${2} ${3}"
+QUEUE_NAME="${TARGET_NAME}_${TIMESTAMP}"
+ESCAPED_QUEUE_NAME=$(printf '%s\n' "${QUEUE_NAME}" | sed -e 's/[]\/$*.^[]/\\&/g');
 
-# Copy the first frame of the burst as the raw photo
-cp "${MAIN_PICTURE}.dng" "${TARGET_NAME}.dng"
-
-# If using all_in_one
-if [ "${ALL_IN_ONE}" -eq 1 ]; then
-    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
-        FUNCTION="all_in_one"
-        log "Starting all_in_one"
-        ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
-
-        if [ "${AUTO_STACK}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${DEHAZE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
-            PROCESSED=1
-        fi
-
-        if [ "${DENOISE_ALL}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${DENOISE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_method fast --denoise_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${COLOR}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
-            PROCESSED=1
-        fi
-
-        if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
-            PROCESSED=1
-        fi
-
-        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
-            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
-            INPUT_FOLDER="${BURST_DIR}"
-        else
-            COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} all_in_one"
-            INPUT_FOLDER="/mnt"
-        fi
-
-        run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
-
-        run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-        if [ "$PROCESSED" -eq 1 ]; then
-            run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-        fi
-    fi
-else
-    # Create a .jpg if raw processing tools are installed
-    DCRAW=""
-    TIFF_EXT="dng.tiff"
-    if command -v "dcraw_emu" >/dev/null; then
-        DCRAW=dcraw_emu
-        # -fbdd 1	Raw denoising with FBDD
-        denoise="-fbdd 1"
-    elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
-        DCRAW=/usr/lib/libraw/dcraw_emu
-        # -fbdd 1	Raw denoising with FBDD
-        denoise="-fbdd 1"
-    elif command -v "dcraw" >/dev/null; then
-        DCRAW=dcraw
-        TIFF_EXT="tiff"
-    fi
-
-    CONVERT=""
-    if command -v "convert" >/dev/null; then
-        CONVERT="convert"
-        # -fbdd 1	Raw denoising with FBDD
-        denoise="-fbdd 1"
-    elif command -v "gm" >/dev/null; then
-        CONVERT="gm"
-    fi
-
-    if [ -n "${DCRAW}" ]; then
-        # $DCRAW FLAGS
-        # +M		use embedded color matrix
-        # -H 4		Recover highlights by rebuilding them
-        # -o 1		Output in sRGB colorspace
-        # -q 3		Debayer with AHD algorithm
-        # -T		Output TIFF
-        
-        run "${DCRAW} +M -H 4 -o 1 -q 3 -T ${denoise} \"${MAIN_PICTURE}.dng\""
-
-        # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
-        if [ -n "${CONVERT}" ]; then
-            if [ "${CONVERT}" = "convert" ]; then
-                run "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            else
-                # sadly sigmoidal contrast is not available in imagemagick
-                run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            fi
-
-            run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-
-            log "Complete"
-        else
-            run "cp \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${TARGET_NAME}.tiff\""
-        fi
+# Check if $QUEUE_NAME exists in /tmp/megapixels_queue.txt, if so exit if not append $QUEUE_NAME to /tmp/megapixels_queue.txt
+# This is used by the megapixels script to determine if it should be ran or if another instance is already running
+if [ -f "/tmp/megapixels_queue.txt" ]; then
+    if grep -q "${QUEUE_NAME}" "/tmp/megapixels_queue.txt"; then
+        log "Skipping ${QUEUE_NAME}, already queued"
+        exit 0
     fi
 fi
+echo "${QUEUE_NAME}" >> "/tmp/megapixels_queue.txt"
 
-# Clean up the temp dir containing the burst
-rm -rf "${BURST_DIR}"
+FIRST_LINE=$(head -n 1 /tmp/megapixels_queue.txt)
 
-# Clean up the .dng if the user didn't want it
-if [ "${SAVE_DNG}" -eq "0" ]; then
-    run "rm \"${TARGET_NAME}.dng\""
-fi
+# Loop until the first line in the queue is the same as the current instance
+while [ "${FIRST_LINE}" != "${QUEUE_NAME}" ]; do
+    sleep 5
+    FIRST_LINE=$(head -n 1 /tmp/megapixels_queue.txt)
+done
 
-MAIN_END=$(date +%s%3N)
-MAIN_DURATION=$((MAIN_END - MAIN_START))
-log "Entire processing took ${MAIN_DURATION} milliseconds"
+# Run the megapixels script
+run "main ${BURST_DIR} ${TARGET_NAME} ${SAVE_DNG}"
