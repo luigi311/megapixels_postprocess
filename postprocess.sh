@@ -38,10 +38,11 @@ run() {
 
 trap_die() {
     EXIT_CODE="$?"
-    if [ "${EXIT_CODE}" -eq 0 ]; then
-        # Remove all instances of ${QUEUE_NAME} from /tmp/megapixels_queue.txt file
-        sed -i "/${ESCAPED_QUEUE_NAME}/d" /tmp/megapixels_queue.txt
 
+    # Remove all instances of ${QUEUE_NAME} from /tmp/megapixels_queue.txt file
+    sed -i "/${ESCAPED_QUEUE_NAME}/d" /tmp/megapixels_queue.txt
+
+    if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
         #rm -f "${LOGFILE:?}"
 
@@ -50,9 +51,6 @@ trap_die() {
     else
         MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
         log "${MESSAGE}"
-
-        # Remove all instances of ${QUEUE_NAME} from /tmp/megapixels_queue.txt file
-        sed -i "/${ESCAPED_QUEUE_NAME}/d" /tmp/megapixels_queue.txt
     fi
 }
 
@@ -110,7 +108,7 @@ main() {
     INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
     EXTERNAL_EXTENSION="png" # Final image extension to output the final image
     MAIN_PICTURE="${BURST_DIR}/1"
-    PROCESSED=0 # Flag to check if processed files are present
+    SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
     DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
     DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
     DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
@@ -120,6 +118,7 @@ main() {
     ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
     LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
     DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
+    PROCESSED=0 # Flag to check if processed files are present
 
     log "Starting post-processing"
     log "${0} ${1} ${2} ${3}"
@@ -133,6 +132,10 @@ main() {
             FUNCTION="all_in_one"
             log "Starting all_in_one"
             ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
+
+            if [ "${SHRINK_IMAGES}" -eq 1 ]; then
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
+            fi
 
             if [ "${AUTO_STACK}" -eq 1 ]; then
                 ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
@@ -150,7 +153,7 @@ main() {
             fi
 
             if [ "${DENOISE}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_method fast --denoise_amount 2"
+                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise --denoise_method fast --denoise_amount 2"
                 PROCESSED=1
             fi
 
