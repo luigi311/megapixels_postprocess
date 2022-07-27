@@ -80,10 +80,9 @@ finalize_image() {
         if command -v "cavif" >/dev/null; then
             IMAGE="${1%.*}"
 
-            # if internal extension is no png then convert to png first due to cavif limits
+            # if internal extension is not png then convert to png first due to cavif limits
             if [ "$INTERNAL_EXTENSION" != "png" ]; then
                 convert "${1}" "${IMAGE}.png"
-                INPUT_EXTENSION="png"
             fi
 
             OUTPUT_EXTENSION="avif"
@@ -280,7 +279,7 @@ SINGLE_QUEUE_FILE="/tmp/megapixels_single_queue.txt"
 POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
 
 # Copy the first frame of the burst as the raw photo
-if [ "$3" -eq 1 ]; then
+if [ "$SAVE_DNG" -eq 1 ]; then
     log "Saving DNG"
     run "cp \"${MAIN_PICTURE}.dng\" \"${TARGET_NAME}.dng\""
 fi
