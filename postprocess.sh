@@ -113,7 +113,7 @@ single_image() {
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
             FUNCTION="single_image: all_in_one"
             log "Starting all_in_one"
-            ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
+            ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe --scale_down 540"
 
             if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
                 COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
@@ -191,7 +191,7 @@ post_process() {
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
             FUNCTION="post_process: all_in_one"
             log "Starting all_in_one"
-            ALL_IN_ONE_FLAGS="--interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe"
+            ALL_IN_ONE_FLAGS="--interal_image_extension ${INTERNAL_EXTENSION} --contrast_method histogram_clahe --scale_down 540"
 
             if [ "${SHRINK_IMAGES}" -eq 1 ]; then
                 ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
