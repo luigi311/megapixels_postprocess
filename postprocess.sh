@@ -48,6 +48,8 @@ trap_die() {
     sed -i "/${ESCAPED_QUEUE_NAME}/d" "${POSTPROCESS_QUEUE_FILE}"
     sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
 
+    log "Total Time: ${SECONDS} seconds"
+
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
         rm -f "${LOGFILE:?}"
