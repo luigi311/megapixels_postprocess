@@ -48,7 +48,7 @@ trap_die() {
     sed -i "/${ESCAPED_QUEUE_NAME}/d" "${POSTPROCESS_QUEUE_FILE}"
     sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
 
-    log "Total Time: ${SECONDS} seconds"
+    log "Total Time: ${TOTAL} seconds"
 
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
@@ -310,11 +310,13 @@ while [ "${FIRST_LINE}" != "${QUEUE_NAME}" ]; do
     FIRST_LINE=$(head -n 1 ${SINGLE_QUEUE_FILE})
 done
 
+SECONDS=0
 run "single_image"
 
 # Remove from single queue file if it exists
 sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
 
+TOTAL=SECONDS
 
 # Check if $QUEUE_NAME exists in POSTPROCESS_QUEUE_FILE, if so exit if not append $QUEUE_NAME to POSTPROCESS_QUEUE_FILE
 # This is used by the megapixels script to determine if it should be ran or if another instance is already running
@@ -334,4 +336,6 @@ while [ "${FIRST_LINE}" != "${QUEUE_NAME}" ]; do
     FIRST_LINE=$(head -n 1 ${POSTPROCESS_QUEUE_FILE})
 done
 
+SECONDS=0
 run "post_process"
+TOTAL=$(echo "$TOTAL + $SECONDS" | bc -l)
