@@ -26,12 +26,17 @@ log() {
 }
 
 run() {
+    local start
+    local ret
+    local end
+    local duration
+
     # Run and time command down to the millisecond
     log "Running: $*"
-    local start=$(date +%s%3N)
-    local ret=$(eval "$1" 2>&1)
-    local end=$(date +%s%3N)
-    local duration=$((end - start))
+    start=$(date +%s%3N)
+    ret=$(eval "$1" 2>&1)
+    end=$(date +%s%3N)
+    duration=$((end - start))
     log "Command took $duration milliseconds"
     log "Returned: $ret"
 }
