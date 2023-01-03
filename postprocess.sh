@@ -257,6 +257,8 @@ LOGFILE="${TARGET_NAME}.log"
 QUEUE_NAME="${TARGET_NAME}_${TIMESTAMP}"
 ESCAPED_QUEUE_NAME=$(printf '%s\n' "${QUEUE_NAME}" | sed -e 's/[]\/$*.^[]/\\&/g');
 
+log "$0 $*"
+
 # Setup Variables
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image
@@ -281,7 +283,6 @@ if [ "$SAVE_DNG" -eq 1 ]; then
     run "cp \"${MAIN_PICTURE}.dng\" \"${TARGET_NAME}.dng\""
 fi
 
-
 # Check if $QUEUE_NAME exists in SINGLE_QUEUE_FILE, if so exit if not append $QUEUE_NAME to SINGLE_QUEUE_FILE
 # This is used by the megapixels script to determine if it should be ran or if another instance is already running
 if [ -f "${SINGLE_QUEUE_FILE}" ]; then
@@ -290,8 +291,8 @@ if [ -f "${SINGLE_QUEUE_FILE}" ]; then
         exit 0
     fi
 fi
-echo "${QUEUE_NAME}" >> "${SINGLE_QUEUE_FILE}"
 
+echo "${QUEUE_NAME}" >> "${SINGLE_QUEUE_FILE}"
 FIRST_LINE=$(head -n 1 ${SINGLE_QUEUE_FILE})
 
 # Loop until the first line in the queue is the same as the current instance
@@ -313,8 +314,8 @@ if [ -f "${POSTPROCESS_QUEUE_FILE}" ]; then
         exit 0
     fi
 fi
-echo "${QUEUE_NAME}" >> "${POSTPROCESS_QUEUE_FILE}"
 
+echo "${QUEUE_NAME}" >> "${POSTPROCESS_QUEUE_FILE}"
 FIRST_LINE=$(head -n 1 ${POSTPROCESS_QUEUE_FILE})
 
 # Loop until the first line in the queue is the same as the current instance
