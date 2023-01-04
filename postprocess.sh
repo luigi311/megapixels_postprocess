@@ -16,6 +16,29 @@
 
 set -e
 
+BURST_DIR="${1%/}"
+TARGET_NAME="$2"
+SAVE_DNG="$3"
+LOGFILE="${TARGET_NAME}.log"
+
+# Setup Variables
+INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
+EXTERNAL_EXTENSION="png" # Final image extension to output the final image
+MAIN_PICTURE="${BURST_DIR}/1"
+SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
+DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
+DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
+DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
+AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
+COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
+SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
+ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
+LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
+DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
+PROCESSED=0 # Flag to check if processed files are present
+SINGLE_QUEUE_FILE="/tmp/megapixels_single_queue.txt"
+POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
+
 # keep track of the last executed command
 trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
 # echo an error message before exiting
@@ -36,9 +59,11 @@ run() {
 trap_die() {
     EXIT_CODE="$?"
 
-    # Remove all instances of ${QUEUE_NAME} from ${POSTPROCESS_QUEUE_FILE} file
-    sed -i "/${ESCAPED_QUEUE_NAME}/d" "${POSTPROCESS_QUEUE_FILE}"
-    sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
+    if [ -f "${POSTPROCESS_QUEUE_FILE}" ]; then
+        # Remove all instances of ${QUEUE_NAME} from ${POSTPROCESS_QUEUE_FILE} file
+        sed -i "/${ESCAPED_QUEUE_NAME}/d" "${POSTPROCESS_QUEUE_FILE}"
+        sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
+    fi
 
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
@@ -249,33 +274,11 @@ fi
 
 FUNCTION="main" # Variable to hold the stage of the script for log output
 TIMESTAMP=$(date +%s%3N)
-BURST_DIR="${1%/}"
-TARGET_NAME="$2"
-SAVE_DNG="$3"
-LOGFILE="${TARGET_NAME}.log"
 
 QUEUE_NAME="${TARGET_NAME}_${TIMESTAMP}"
 ESCAPED_QUEUE_NAME=$(printf '%s\n' "${QUEUE_NAME}" | sed -e 's/[]\/$*.^[]/\\&/g');
 
 log "$0 $*"
-
-# Setup Variables
-INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
-EXTERNAL_EXTENSION="png" # Final image extension to output the final image
-MAIN_PICTURE="${BURST_DIR}/1"
-SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
-DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
-DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
-DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
-AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
-COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
-SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
-ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
-LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
-DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
-PROCESSED=0 # Flag to check if processed files are present
-SINGLE_QUEUE_FILE="/tmp/megapixels_single_queue.txt"
-POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
 
 # Copy the first frame of the burst as the raw photo
 if [ "$SAVE_DNG" -eq 1 ]; then
