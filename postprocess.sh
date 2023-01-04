@@ -16,6 +16,11 @@
 
 set -e
 
+if [ "$#" -ne 3 ]; then
+    printf "Usage: %s [burst-dir] [target-name] [save-dng]\n" "$0"
+    exit 2
+fi
+
 BURST_DIR="${1%/}"
 TARGET_NAME="$2"
 SAVE_DNG="$3"
@@ -267,11 +272,6 @@ post_process() {
     fi
 }
 
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 [burst-dir] [target-name] [save-dng]"
-    exit 2
-fi
-
 FUNCTION="main" # Variable to hold the stage of the script for log output
 TIMESTAMP=$(date +%s%3N)
 
@@ -295,7 +295,7 @@ if [ -f "${SINGLE_QUEUE_FILE}" ]; then
     fi
 fi
 
-echo "${QUEUE_NAME}" >> "${SINGLE_QUEUE_FILE}"
+printf "%s\n" "${QUEUE_NAME}" >> "${SINGLE_QUEUE_FILE}"
 FIRST_LINE=$(head -n 1 ${SINGLE_QUEUE_FILE})
 
 # Loop until the first line in the queue is the same as the current instance
@@ -318,7 +318,7 @@ if [ -f "${POSTPROCESS_QUEUE_FILE}" ]; then
     fi
 fi
 
-echo "${QUEUE_NAME}" >> "${POSTPROCESS_QUEUE_FILE}"
+printf "%s\n" "${QUEUE_NAME}" >> "${POSTPROCESS_QUEUE_FILE}"
 FIRST_LINE=$(head -n 1 ${POSTPROCESS_QUEUE_FILE})
 
 # Loop until the first line in the queue is the same as the current instance
