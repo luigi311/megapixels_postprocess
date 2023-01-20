@@ -229,7 +229,7 @@ finalize_image() {
     elif [ "$EXTERNAL_EXTENSION" = "$INTERNAL_EXTENSION" ]; then
         run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     else
-        run "convert \"${1}\" \"${2}.${EXTERNAL_EXTENSION}\""
+        run "convert \"${1}\" -quality ${IMAGE_QUALITY}% \"${2}.${EXTERNAL_EXTENSION}\""
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
