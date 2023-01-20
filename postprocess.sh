@@ -21,44 +21,43 @@ if [ "$#" -ne 3 ]; then
     exit 2
 fi
 
-BURST_DIR="${1%/}"
-TARGET_NAME="$2"
-SAVE_DNG="$3"
-LOGFILE="${TARGET_NAME}.log"
-
-# Setup Variables
-INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
+# Processing variables
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image
-MAIN_PICTURE="${BURST_DIR}/1"
+AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
 DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
 DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
-AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
-ALL_IN_ONE=1 # Enable all in one script, set to 0 to disable, set to 1 to enable
-LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing"
+LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
+
+# Setup variables
+INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
+FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to enable
+CONTAINER_RUNTIME="podman" # Set the container runtime to use, podman or docker
+LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing" # Path to check for the low power image processing repo if not using docker containers
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
-PROCESSED=0 # Flag to check if processed files are present
 SINGLE_QUEUE_FILE="/tmp/megapixels_single_queue.txt"
 POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
 
+# Runtime variables
+PROCESSED=0 # Flag to check if processed files are present
+BURST_DIR="${1%/}"
+TARGET_NAME="$2"
+SAVE_DNG="$3"
+LOGFILE="${TARGET_NAME}.log"
+MAIN_PICTURE="${BURST_DIR}/1"
+
 # keep track of the last executed command
-trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
+trap 'LAST_COMMAND=$CURRENT_COMMAND; CURRENT_COMMAND=$BASH_COMMAND' DEBUG
 # echo an error message before exiting
 trap 'trap_die' EXIT
 
 log() {
-    printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1" >> "${LOGFILE}"
-}
-
-run() {
-    local ret
-
-    log "Running: $1"
-    ret=$(eval "$1" 2>&1)
-    log "Returned: $ret"
+    MESSAGE=$(printf '[%s] %s: %s\n' "$(date)" "$FUNCTION" "$1")
+    
+    printf '%s\n' "$MESSAGE" >> "$LOGFILE"
 }
 
 trap_die() {
@@ -72,14 +71,118 @@ trap_die() {
 
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
-        rm -f "${LOGFILE:?}"
+        #rm -f "${LOGFILE:?}"
 
         # Clean up the temp dir containing the burst
-        rm -rf "${BURST_DIR:?}"
+        #rm -rf "${BURST_DIR:?}"
     else
-        MESSAGE="ERROR \"${current_command}\" command filed with exit code ${EXIT_CODE}."
-        log "${MESSAGE}"
+        log "ERROR: \"${CURRENT_COMMAND}\" command failed with exit code ${EXIT_CODE}."
     fi
+}
+
+check_command() {
+    local COMMAND_CHECK
+    local COMMAND_NAME
+    
+    # Grab the actual command from the string
+    COMMAND_NAME=$(echo "$1" | awk '{print $1}')
+
+    # Check if the command exists if not check if container runtime exists
+    if command -v "${COMMAND_NAME}" &> /dev/null; then
+        COMMAND_CHECK=0
+    elif command -v "${CONTAINER_RUNTIME}" &> /dev/null; then
+        COMMAND_CHECK=0
+    else
+        COMMAND_CHECK=1
+    fi
+
+    if [ "${COMMAND_CHECK}" -eq 1 ]; then
+        log "ERROR: ${COMMAND_NAME} and ${CONTAINER_RUNTIME} command not found"
+    fi
+
+    printf "%d" "${COMMAND_CHECK}"
+}
+
+run() {
+    local ret
+    local COMMAND_NAME
+    local COMMAND_ARG
+    local COMMAND_OVER
+
+    COMMAND_ARG="$1"
+
+    # Grab the actual command from the string
+    COMMAND_NAME=$(echo "$COMMAND_ARG" | awk '{print $1}')
+
+    # Check if the command is a function
+    if declare -f "$COMMAND_NAME" > /dev/null
+    then
+        log "Running: $*"
+        ret=$(eval "$COMMAND_ARG" 2>&1)
+    else
+        if [ "$(check_command "$COMMAND_NAME")" ]; then
+            # Get last two arguments from the command
+            DESTINATION_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $NF}')
+            SOURCE_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $(NF-1)}')
+            if [ "${SOURCE_IMAGE}" = "-o" ]; then
+                SOURCE_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $(NF-2)}')
+            fi
+
+            # Strip quotes from the source and destination images
+            SOURCE_IMAGE="${SOURCE_IMAGE//\"}"
+            DESTINATION_IMAGE="${DESTINATION_IMAGE//\"}"
+
+            # Check if the source image exists
+            if [ -f "${SOURCE_IMAGE}" ]; then
+                MOUNTS="-v ${BURST_DIR}:/source -v ${DESTINATION_PATH}:/destination"
+
+                DESTINATION_PATH=$(dirname "${DESTINATION_IMAGE}")
+                # Check if the destination path exists
+                if [ ! -d "${DESTINATION_PATH}" ]; then
+                    log "Creating destination path: ${DESTINATION_PATH}"
+                    mkdir -p "${DESTINATION_PATH}"
+                fi
+
+                # Override the command to update the paths to be relative to the container
+                COMMAND_OVER="$COMMAND_ARG"
+                COMMAND_OVER="${COMMAND_OVER/${SOURCE_IMAGE}/\/source\/$(basename "${SOURCE_IMAGE}")}"
+                COMMAND_OVER="${COMMAND_OVER/${DESTINATION_IMAGE}/\/destination\/$(basename "${DESTINATION_IMAGE}")}"
+            else
+                MOUNTS="-v \"${BURST_DIR}:/mnt\""
+            fi
+
+            # If force container is set, run the command in a container
+            # if command avaliable locally run it locally
+            # if command not avaliable locally, run it in a container if avaliable
+            if [ "$FORCE_CONTAINER" -eq 1 ]; then
+                # If COMMAND_OVER is set, use that, otherwise use COMMAND_ARG
+                if [ -n "${COMMAND_OVER}" ]; then
+                    COMMAND_ARG="${COMMAND_OVER}"
+                fi
+
+                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
+                log "Running: $RUN_COMMAND"
+                ret=$(eval "$RUN_COMMAND" 2>&1)
+            elif [ -x "$(command -v "${COMMAND_NAME}")" ]; then
+                log "Running: $COMMAND_ARG"
+                ret=$(eval "$COMMAND_ARG" 2>&1)
+            elif [ -x "$(command -v "$CONTAINER_RUNTIME")" ]; then
+                # If COMMAND_OVER is set, use that, otherwise use COMMAND_ARG
+                if [ -n "${COMMAND_OVER}" ]; then
+                    COMMAND_ARG="${COMMAND_OVER}"
+                fi
+
+                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
+                log "Running: $RUN_COMMAND"
+                ret=$(eval "$RUN_COMMAND" 2>&1)
+            fi
+        else
+            ret="Command $COMMAND_NAME not found"
+        fi
+
+    fi
+
+    log "Returned: $ret"
 }
 
 exiftool_function() {
@@ -95,16 +198,22 @@ exiftool_function() {
 
 finalize_image() {
     FALLBACK=0
-
+    log "Finalize image"
     if [ "$EXTERNAL_EXTENSION" = "jxl" ]; then
-        if command -v "cjxl" >/dev/null; then
-            OUTPUT_EXTENSION="jxl"
-            cjxl -q 95 "${1}" "${2}.${OUTPUT_EXTENSION}"
+        if check_command "cjxl"; then
+            IMAGE="${1%.*}"
+            
+            # if internal extension is not png then convert to png first due to cjxl limits
+            if [ "$INTERNAL_EXTENSION" != "png" ]; then
+                convert "${1}" "${IMAGE}.png"
+            fi
+
+            run "cjxl -q 95 \"${IMAGE}.png\" \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
     elif [ "$EXTERNAL_EXTENSION" = "avif" ]; then
-        if command -v "cavif" >/dev/null; then
+        if check_command "cavif"; then
             IMAGE="${1%.*}"
 
             # if internal extension is not png then convert to png first due to cavif limits
@@ -112,22 +221,18 @@ finalize_image() {
                 convert "${1}" "${IMAGE}.png"
             fi
 
-            OUTPUT_EXTENSION="avif"
-            cavif -f -s 6 -Q 80 "${IMAGE}.png" -o "${2}.avif"
+            run "cavif --overwrite --speed 6 -Q 85 \"${IMAGE}.png\" -o \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
-    elif [ "$EXTERNAL_EXTENSION" = "png" ] && [ "$INTERNAL_EXTENSION" = "png" ]; then
-        OUTPUT_EXTENSION="png"
-        cp "${1}" "${2}.png"
+    elif [ "$EXTERNAL_EXTENSION" = "$INTERNAL_EXTENSION" ]; then
+        run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     else
-        OUTPUT_EXTENSION="$EXTERNAL_EXTENSION"
-        convert "${1}" "${2}.${OUTPUT_EXTENSION}"
+        run "convert \"${1}\" \"${2}.${EXTERNAL_EXTENSION}\""
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
-        OUTPUT_EXTENSION="png"
-        cp "${1}" "${2}.png"
+        run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     fi
 }
 
@@ -135,29 +240,33 @@ single_image() {
     FUNCTION="single_image"
     log "Processing single image"
 
-    # If using all_in_one
-    if [ "${ALL_IN_ONE}" -eq 1 ]; then
-        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
-            FUNCTION="single_image: all_in_one"
-            log "Starting all_in_one"
-            ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+    if [ "$LEGACY_STACK" -eq 0 ]; then
+        FUNCTION="single_image: all_in_one"
+        log "Starting all_in_one"
+        ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
-                COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
-                INPUT_FOLDER="${BURST_DIR}"
-            else
-                COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} all_in_one"
-                INPUT_FOLDER="/mnt"
-            fi
-
-            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
-
-            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
+            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
+            INPUT_FOLDER="${BURST_DIR}"
+        else
+            COMMAND="all_in_one"
+            INPUT_FOLDER="/mnt"
         fi
-    else
+
+        if [ "$(check_command "${COMMAND}")" ]; then
+            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\""
+            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+        else
+            log "Falling back to legacy stack"
+            LEGACY_STACK=1
+        fi
+    fi
+    
+    if [ "$LEGACY_STACK" -eq 1 ]; then
         # Create using raw processing tools
         DCRAW=""
         TIFF_EXT="dng.tiff"
+        
         if command -v "dcraw_emu" >/dev/null; then
             DCRAW=dcraw_emu
             # -fbdd 1   Raw denoising with FBDD
@@ -206,6 +315,8 @@ single_image() {
             else
                 run "finalize_image \"${MAIN_PICTURE}.${TIFF_EXT}\" ${TARGET_NAME}"
             fi
+        else
+            log "ERROR: No raw processing tools found"
         fi
     fi
 }
@@ -213,61 +324,59 @@ single_image() {
 post_process() {
     FUNCTION="post_process"
     log "Starting post-processing"
-    # If using all_in_one
-    if [ "${ALL_IN_ONE}" -eq 1 ]; then
-        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ] || command -v "podman" >/dev/null; then
-            FUNCTION="post_process: all_in_one"
-            log "Starting all_in_one"
-            ALL_IN_ONE_FLAGS="--interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
-            if [ "${SHRINK_IMAGES}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
-            fi
+    if [ "$LEGACY_STACK" -eq 0 ]; then
+        FUNCTION="post_process: all_in_one"
+        log "Starting all_in_one"
+        ALL_IN_ONE_FLAGS="--interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
-            if [ "${AUTO_STACK}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
-                PROCESSED=1
-            fi
+        if [ "${SHRINK_IMAGES}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
+        fi
 
-            if [ "${DEHAZE}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
-                PROCESSED=1
-            fi
+        if [ "${AUTO_STACK}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
+            PROCESSED=1
+        fi
 
-            if [ "${DENOISE_ALL}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
-                PROCESSED=1
-            fi
+        if [ "${DEHAZE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
+            PROCESSED=1
+        fi
 
-            if [ "${DENOISE}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise --denoise_method fast --denoise_amount 2"
-                PROCESSED=1
-            fi
+        if [ "${DENOISE_ALL}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
+            PROCESSED=1
+        fi
 
-            if [ "${COLOR}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
-                PROCESSED=1
-            fi
+        if [ "${DENOISE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise --denoise_method fast --denoise_amount 2"
+            PROCESSED=1
+        fi
 
-            if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
-                ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
-                PROCESSED=1
-            fi
+        if [ "${COLOR}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
+            PROCESSED=1
+        fi
 
-            if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py" ]; then
-                COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one/all_in_one.py"
-                INPUT_FOLDER="${BURST_DIR}"
-            else
-                COMMAND="podman run -v ${BURST_DIR}:/mnt --user 0 --rm ${DOCKER_IMAGE} all_in_one"
-                INPUT_FOLDER="/mnt"
-            fi
+        if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
+            PROCESSED=1
+        fi
 
-            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
+            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
+            INPUT_FOLDER="${BURST_DIR}"
+        else
+            COMMAND="all_in_one"
+            INPUT_FOLDER="/mnt"
+        fi
 
-            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-            if [ "$PROCESSED" -eq 1 ]; then
-                run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-            fi
+        run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+
+        run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
+        if [ "$PROCESSED" -eq 1 ]; then
+            run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
     fi
 }
