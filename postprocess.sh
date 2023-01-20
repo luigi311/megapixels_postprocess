@@ -192,7 +192,7 @@ exiftool_function() {
     exiftool -tagsFromfile "$1" \
         -software="Megapixels" \
         -fast \
-        -n \
+        -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace \
         -overwrite_original "$2"
 }
 
