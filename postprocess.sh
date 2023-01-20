@@ -189,17 +189,17 @@ run() {
 exiftool_function() {
     # If exiftool is installed copy the exif data over from the tiff to the jpeg
     # since imagemagick is stupid
-    if command -v exiftool >/dev/null; then
-        exiftool -tagsFromfile "$1" \
+    exiftool -tagsFromfile "$1" \
         -software="Megapixels" \
         -fast \
+        -n \
         -overwrite_original "$2"
-    fi
 }
 
 finalize_image() {
     FALLBACK=0
     log "Finalize image"
+    OUTPUT_EXTENSION="${EXTERNAL_EXTENSION}"
     if [ "$EXTERNAL_EXTENSION" = "jxl" ]; then
         if check_command "cjxl"; then
             IMAGE="${1%.*}"
@@ -234,7 +234,10 @@ finalize_image() {
 
     if [ "$FALLBACK" -eq 1 ]; then
         run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
+        OUTPUT_EXTENSION="${INTERNAL_EXTENSION}"
     fi
+
+    run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${OUTPUT_EXTENSION}\""
 }
 
 single_image() {
@@ -309,7 +312,6 @@ single_image() {
                     run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
                 fi
 
-                run "exiftool_function \"${MAIN_PICTURE}.${TIFF_EXT}\" \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
                 run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
 
                 log "Complete"
