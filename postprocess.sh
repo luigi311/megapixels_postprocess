@@ -23,6 +23,7 @@ fi
 
 # Processing variables
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image
+IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
 DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
@@ -208,7 +209,7 @@ finalize_image() {
                 convert "${1}" "${IMAGE}.png"
             fi
 
-            run "cjxl -q 95 \"${IMAGE}.png\" \"${2}.${EXTERNAL_EXTENSION}\""
+            run "cjxl -e 4 -q ${IMAGE_QUALITY} \"${IMAGE}.png\" \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
@@ -221,7 +222,7 @@ finalize_image() {
                 convert "${1}" "${IMAGE}.png"
             fi
 
-            run "cavif --overwrite --speed 6 -Q 85 \"${IMAGE}.png\" -o \"${2}.${EXTERNAL_EXTENSION}\""
+            run "cavif --overwrite --speed 6 -Q ${IMAGE_QUALITY} \"${IMAGE}.png\" -o \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
