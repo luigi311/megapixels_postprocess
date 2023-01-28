@@ -44,6 +44,11 @@ if ! command -v "bash" > /dev/null; then
     elif command -v "apk" >/dev/null; then
         apk update
         apk add bash
+    elif command -v "apt" >/dev/null; then
+        apt update
+        apt install bash
+    else
+        echo "Unknown package manager, bash needs to be install via your preferred method"
     fi
 fi
 
@@ -56,6 +61,9 @@ if ! command -v "podman" >/dev/null; then
         rc-update add cgroups
         rc-service cgroups start
         modprobe tun
+    elif command -v "apt" >/dev/null; then
+        apt update
+        apt install podman fuse-overlayfs slirp4netns
     else
         echo "Unknown package manager, podman needs to be install via your preferred method"
     fi
