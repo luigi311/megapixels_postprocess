@@ -202,7 +202,7 @@ finalize_image() {
             FALLBACK=1
         fi
     elif [ "$EXTERNAL_EXTENSION" = "$INTERNAL_EXTENSION" ]; then
-        run "mv \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
+        run "mv -f \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     else
         run "convert \"${1}\" -quality ${IMAGE_QUALITY}% \"${2}.${EXTERNAL_EXTENSION}\""
     fi
