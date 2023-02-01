@@ -31,11 +31,14 @@ DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
 COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
-LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
+SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to disable, set to 1 to enable
+SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
 
 # Setup variables
+PARALLEL_RAW=3 # Amount of dng images to read in parallel
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
 FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to enable
+LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
 CONTAINER_RUNTIME="podman" # Set the container runtime to use, podman or docker
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing" # Path to check for the low power image processing repo if not using docker containers
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
@@ -189,11 +192,9 @@ run() {
 exiftool_function() {
     # If exiftool is installed copy the exif data over from the tiff to the jpeg
     # since imagemagick is stupid
-    exiftool -tagsFromfile "$1" \
-        -software="Megapixels" \
-        -fast \
+    run "exiftool -software=\"Megapixels\" -fast \
         -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace \
-        -overwrite_original "$2"
+        -overwrite_original -tagsFromfile \"$1\" \"$2\""
 }
 
 finalize_image() {
@@ -247,7 +248,7 @@ single_image() {
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="single_image: all_in_one"
         log "Starting all_in_one"
-        ALL_IN_ONE_FLAGS="--single_image --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+        ALL_IN_ONE_FLAGS="--single_image --parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
             COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
@@ -331,7 +332,7 @@ post_process() {
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="post_process: all_in_one"
         log "Starting all_in_one"
-        ALL_IN_ONE_FLAGS="--interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+        ALL_IN_ONE_FLAGS="--parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
         if [ "${SHRINK_IMAGES}" -eq 1 ]; then
             ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
@@ -365,6 +366,10 @@ post_process() {
         if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
             ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
             PROCESSED=1
+        fi
+
+        if [ "${SHARPEN}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --sharpen unsharp_mask --sharpen_amount ${SHARPEN_AMOUNT}"
         fi
 
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
