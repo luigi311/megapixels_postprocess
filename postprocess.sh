@@ -49,6 +49,7 @@ POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
 PROCESSED=0 # Flag to check if processed files are present
 BURST_DIR="${1%/}"
 TARGET_NAME="$2"
+TARGET_DIR=$(dirname "${TARGET_NAME}")
 SAVE_DNG="$3"
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
@@ -111,7 +112,6 @@ run() {
     local ret
     local COMMAND_NAME
     local COMMAND_ARG
-    local COMMAND_OVER
 
     COMMAND_ARG="$1"
 
@@ -125,45 +125,15 @@ run() {
         ret=$(eval "$COMMAND_ARG" 2>&1)
     else
         if [ "$(check_command "$COMMAND_NAME")" ]; then
-            # Get last two arguments from the command
-            DESTINATION_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $NF}')
-            SOURCE_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $(NF-1)}')
-            if [ "${SOURCE_IMAGE}" = "-o" ]; then
-                SOURCE_IMAGE=$(echo "$COMMAND_ARG" | awk '{print $(NF-2)}')
-            fi
+            MOUNTS="-v \"${BURST_DIR}:/mnt\" -v \"${TARGET_DIR}:/destination\""
 
-            # Strip quotes from the source and destination images
-            SOURCE_IMAGE="${SOURCE_IMAGE//\"}"
-            DESTINATION_IMAGE="${DESTINATION_IMAGE//\"}"
-
-            # Check if the source image exists
-            if [ -f "${SOURCE_IMAGE}" ]; then
-                MOUNTS="-v ${BURST_DIR}:/source -v ${DESTINATION_PATH}:/destination"
-
-                DESTINATION_PATH=$(dirname "${DESTINATION_IMAGE}")
-                # Check if the destination path exists
-                if [ ! -d "${DESTINATION_PATH}" ]; then
-                    log "Creating destination path: ${DESTINATION_PATH}"
-                    mkdir -p "${DESTINATION_PATH}"
-                fi
-
-                # Override the command to update the paths to be relative to the container
-                COMMAND_OVER="$COMMAND_ARG"
-                COMMAND_OVER="${COMMAND_OVER/${SOURCE_IMAGE}/\/source\/$(basename "${SOURCE_IMAGE}")}"
-                COMMAND_OVER="${COMMAND_OVER/${DESTINATION_IMAGE}/\/destination\/$(basename "${DESTINATION_IMAGE}")}"
-            else
-                MOUNTS="-v \"${BURST_DIR}:/mnt\""
-            fi
 
             # If force container is set, run the command in a container
             # if command avaliable locally run it locally
             # if command not avaliable locally, run it in a container if avaliable
             if [ "$FORCE_CONTAINER" -eq 1 ]; then
-                # If COMMAND_OVER is set, use that, otherwise use COMMAND_ARG
-                if [ -n "${COMMAND_OVER}" ]; then
-                    COMMAND_ARG="${COMMAND_OVER}"
-                fi
-
+                COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
+                COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
                 RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
@@ -171,11 +141,8 @@ run() {
                 log "Running: $COMMAND_ARG"
                 ret=$(eval "$COMMAND_ARG" 2>&1)
             elif [ -x "$(command -v "$CONTAINER_RUNTIME")" ]; then
-                # If COMMAND_OVER is set, use that, otherwise use COMMAND_ARG
-                if [ -n "${COMMAND_OVER}" ]; then
-                    COMMAND_ARG="${COMMAND_OVER}"
-                fi
-
+                COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
+                COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
                 RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
@@ -198,32 +165,36 @@ exiftool_function() {
 }
 
 finalize_image() {
-    FALLBACK=0
     log "Finalize image"
+
+    local FALLBACK
+    FALLBACK=0
+    
+    local OUTPUT_EXTENSION
     OUTPUT_EXTENSION="${EXTERNAL_EXTENSION}"
+    
+    local IMAGE_PATH
+    IMAGE_PATH="${1%.*}"
+
     if [ "$EXTERNAL_EXTENSION" = "jxl" ]; then
         if check_command "cjxl"; then
-            IMAGE="${1%.*}"
-            
             # if internal extension is not png then convert to png first due to cjxl limits
             if [ "$INTERNAL_EXTENSION" != "png" ]; then
-                convert "${1}" "${IMAGE}.png"
+                convert "${1}" "${IMAGE_PATH}.png"
             fi
 
-            run "cjxl -e 4 -q ${IMAGE_QUALITY} \"${IMAGE}.png\" \"${2}.${EXTERNAL_EXTENSION}\""
+            run "cjxl -e 4 -q ${IMAGE_QUALITY} \"${IMAGE_PATH}.png\" \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
     elif [ "$EXTERNAL_EXTENSION" = "avif" ]; then
         if check_command "cavif"; then
-            IMAGE="${1%.*}"
-
             # if internal extension is not png then convert to png first due to cavif limits
             if [ "$INTERNAL_EXTENSION" != "png" ]; then
-                convert "${1}" "${IMAGE}.png"
+                convert "${1}" "${IMAGE_PATH}.png"
             fi
 
-            run "cavif --overwrite --speed 6 -Q ${IMAGE_QUALITY} \"${IMAGE}.png\" -o \"${2}.${EXTERNAL_EXTENSION}\""
+            run "cavif --overwrite --speed 6 -Q ${IMAGE_QUALITY} \"${IMAGE_PATH}.png\" -o \"${2}.${EXTERNAL_EXTENSION}\""
         else
             FALLBACK=1
         fi
@@ -234,7 +205,6 @@ finalize_image() {
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
-        run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
         OUTPUT_EXTENSION="${INTERNAL_EXTENSION}"
     fi
 
