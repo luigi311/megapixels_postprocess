@@ -214,6 +214,9 @@ finalize_image() {
 single_image() {
     FUNCTION="single_image"
     log "Processing single image"
+    
+    local SINGLE_START
+    SINGLE_START=$(date +%s%3N)
 
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="single_image: all_in_one"
@@ -293,11 +296,20 @@ single_image() {
             log "ERROR: No raw processing tools found"
         fi
     fi
+
+    local SINGLE_END
+    SINGLE_END=$(date +%s%3N)
+    local SINGLE_ELAPSED
+    SINGLE_ELAPSED=$((SINGLE_END - SINGLE_START))
+    log "Elapsed time: ${SINGLE_ELAPSED} ms"
 }
 
 post_process() {
     FUNCTION="post_process"
     log "Starting post-processing"
+
+    local POST_START
+    POST_START=$(date +%s%3N)
 
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="post_process: all_in_one"
@@ -355,6 +367,12 @@ post_process() {
             run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
     fi
+
+    local POST_END
+    POST_END=$(date +%s%3N)
+    local POST_ELAPSED
+    POST_ELAPSED=$((POST_END - POST_START))
+    log "Elapsed time: ${POST_ELAPSED} ms"
 }
 
 FUNCTION="main" # Variable to hold the stage of the script for log output
