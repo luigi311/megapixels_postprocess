@@ -35,7 +35,7 @@ SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to d
 SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
 
 # Setup variables
-PARALLEL_RAW=3 # Amount of dng images to read in parallel
+PARALLEL_RAW=2 # Amount of dng images to read in parallel
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
 FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to enable
 LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
@@ -350,10 +350,8 @@ post_process() {
             INPUT_FOLDER="/mnt"
         fi
 
-        run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
-
-        run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         if [ "$PROCESSED" -eq 1 ]; then
+            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
             run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
     fi
