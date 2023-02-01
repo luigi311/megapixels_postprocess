@@ -166,6 +166,9 @@ exiftool_function() {
 
 finalize_image() {
     log "Finalize image"
+    
+    local FINALIZE_START
+    FINALIZE_START=$(date +%s%3N)
 
     local FALLBACK
     FALLBACK=0
@@ -199,7 +202,7 @@ finalize_image() {
             FALLBACK=1
         fi
     elif [ "$EXTERNAL_EXTENSION" = "$INTERNAL_EXTENSION" ]; then
-        run "cp \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
+        run "mv \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     else
         run "convert \"${1}\" -quality ${IMAGE_QUALITY}% \"${2}.${EXTERNAL_EXTENSION}\""
     fi
@@ -209,6 +212,12 @@ finalize_image() {
     fi
 
     run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${OUTPUT_EXTENSION}\""
+
+    local FINALIZE_END
+    FINALIZE_END=$(date +%s%3N)
+    local FINALIZE_ELAPSED
+    FINALIZE_ELAPSED=$((FINALIZE_END - FINALIZE_START))
+    log "Elapsed time finalize: ${FINALIZE_ELAPSED} ms"
 }
 
 single_image() {
