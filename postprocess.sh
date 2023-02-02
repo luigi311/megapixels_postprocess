@@ -234,14 +234,12 @@ single_image() {
 
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
             COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
-            INPUT_FOLDER="${BURST_DIR}"
         else
             COMMAND="all_in_one"
-            INPUT_FOLDER="/mnt"
         fi
 
         if [ "$(check_command "${COMMAND}")" ]; then
-            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\""
+            run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\""
             run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
         else
             log "Falling back to legacy stack"
@@ -365,14 +363,12 @@ post_process() {
 
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
             COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
-            INPUT_FOLDER="${BURST_DIR}"
         else
             COMMAND="all_in_one"
-            INPUT_FOLDER="/mnt"
         fi
 
         if [ "$PROCESSED" -eq 1 ]; then
-            run "${COMMAND} \"${INPUT_FOLDER}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+            run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
             run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
     fi
