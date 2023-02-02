@@ -22,6 +22,7 @@ if [ "$#" -ne 3 ]; then
 fi
 
 # Processing variables
+PARALLEL_RAW=2 # Amount of dng images to read in parallel, each thread will max out a core so dont set this too high
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image
 IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
@@ -35,7 +36,6 @@ SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to d
 SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
 
 # Setup variables
-PARALLEL_RAW=2 # Amount of dng images to read in parallel
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
 FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to enable
 LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
@@ -53,6 +53,8 @@ TARGET_DIR=$(dirname "${TARGET_NAME}")
 SAVE_DNG="$3"
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
+OUTPUT_EXTENSION="${EXTERNAL_EXTENSION}"
+
 
 # keep track of the last executed command
 trap 'LAST_COMMAND=$CURRENT_COMMAND; CURRENT_COMMAND=$BASH_COMMAND' DEBUG
@@ -160,7 +162,7 @@ exiftool_function() {
     # If exiftool is installed copy the exif data over from the tiff to the jpeg
     # since imagemagick is stupid
     run "exiftool -software=\"Megapixels\" -fast \
-        -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace \
+        -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace -x Compression \
         -overwrite_original -tagsFromfile \"$1\" \"$2\""
 }
 
@@ -172,9 +174,6 @@ finalize_image() {
 
     local FALLBACK
     FALLBACK=0
-    
-    local OUTPUT_EXTENSION
-    OUTPUT_EXTENSION="${EXTERNAL_EXTENSION}"
     
     local IMAGE_PATH
     IMAGE_PATH="${1%.*}"
@@ -210,8 +209,6 @@ finalize_image() {
     if [ "$FALLBACK" -eq 1 ]; then
         OUTPUT_EXTENSION="${INTERNAL_EXTENSION}"
     fi
-
-    run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${OUTPUT_EXTENSION}\""
 
     local FINALIZE_END
     FINALIZE_END=$(date +%s%3N)
@@ -372,6 +369,13 @@ post_process() {
             run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
         fi
     fi
+
+    # Copy exif data from the main picture to both the processed and unprocessed images in parallel
+    for IMAGE in "${TARGET_NAME}" "${TARGET_NAME}_processed"; do
+        if [ -f "${IMAGE}.${OUTPUT_EXTENSION}" ]; then
+            run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${IMAGE}.${OUTPUT_EXTENSION}\"" &
+        fi
+    done
 
     local POST_END
     POST_END=$(date +%s%3N)
