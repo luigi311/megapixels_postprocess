@@ -21,9 +21,11 @@ if [ "$#" -ne 3 ]; then
     exit 2
 fi
 
-# Processing variables
-PARALLEL_RAW=2 # Amount of dng images to read in parallel, each thread will max out a core so dont set this too high
-EXTERNAL_EXTENSION="png" # Final image extension to output the final image
+# ********* User variables *********
+
+PARALLEL_RAW=2 # Amount of dng images to read in parallel, will max out a core so dont set this too high
+AUTO_WHITE_BALANCE=0 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
+EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space
 IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
@@ -34,6 +36,9 @@ COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
 SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to disable, set to 1 to enable
 SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
+
+# ********* End user variables *********
+
 
 # Setup variables
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
@@ -136,7 +141,7 @@ run() {
             if [ "$FORCE_CONTAINER" -eq 1 ]; then
                 COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
                 COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
-                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
+                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm -it ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
             elif [ -x "$(command -v "${COMMAND_NAME}")" ]; then
@@ -145,7 +150,7 @@ run() {
             elif [ -x "$(command -v "$CONTAINER_RUNTIME")" ]; then
                 COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
                 COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
-                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
+                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm -it ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
             fi
@@ -224,10 +229,16 @@ single_image() {
     local SINGLE_START
     SINGLE_START=$(date +%s%3N)
 
+    local ALL_IN_ONE_FLAGS
+
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="single_image: all_in_one"
         log "Starting all_in_one"
         ALL_IN_ONE_FLAGS="--single_image --parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+
+        if [ "${AUTO_WHITE_BALANCE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_white_balance"
+        fi
 
         if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
             COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
@@ -315,10 +326,16 @@ post_process() {
     local POST_START
     POST_START=$(date +%s%3N)
 
+    local ALL_IN_ONE_FLAGS
+
     if [ "$LEGACY_STACK" -eq 0 ]; then
         FUNCTION="post_process: all_in_one"
         log "Starting all_in_one"
         ALL_IN_ONE_FLAGS="--parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+
+        if [ "${AUTO_WHITE_BALANCE}" -eq 1 ]; then
+            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_white_balance"
+        fi
 
         if [ "${SHRINK_IMAGES}" -eq 1 ]; then
             ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
