@@ -83,10 +83,10 @@ trap_die() {
 
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
-        rm -f "${LOGFILE:?}"
+        #rm -f "${LOGFILE:?}"
 
         # Clean up the temp dir containing the burst
-        rm -rf "${BURST_DIR:?}"
+        #rm -rf "${BURST_DIR:?}"
     else
         log "ERROR: \"${CURRENT_COMMAND}\" command failed with exit code ${EXIT_CODE}."
     fi
