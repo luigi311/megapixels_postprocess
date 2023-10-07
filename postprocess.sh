@@ -23,7 +23,7 @@ fi
 
 # ********* User variables *********
 
-EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space
+EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space or png for lossless
 PARALLEL_RAW=0 # Amount of dng images to read in parallel, will max out a core so dont set this too high, 0 for auto
 AUTO_WHITE_BALANCE=1 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
 IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
@@ -160,18 +160,14 @@ run() {
 }
 
 exiftool_function() {
-    # If exiftool is installed copy the exif data over from the tiff to the jpeg
-    # since imagemagick is stupid
-    run "exiftool -software=\"Megapixels\" -fast \
+    # Copy exif data from one image to another
+    run "exiftool -fast -software=\"Megapixels\" \
         -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace -x Compression \
         -overwrite_original -tagsFromfile \"$1\" \"$2\""
 }
 
 finalize_image() {
     log "Finalize image"
-    
-    local FINALIZE_START
-    FINALIZE_START=$(date +%s%3N)
 
     local FALLBACK
     FALLBACK=0
@@ -208,27 +204,21 @@ finalize_image() {
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
-        OUTPUT_EXTENSION="${INTERNAL_EXTENSION}"
+        log "Failed to use ${EXTERNAL_EXTENSION} using ${INTERNAL_EXTENSION} instead"
+        EXTERNAL_EXTENSION="${INTERNAL_EXTENSION}"
+        run "mv -f \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     fi
 
-    # Copy exif data
-    if [ "${EXTERNAL_EXTENSION}" == "jpg" ]; then
-        run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${EXTERNAL_EXTENSION}\"" &
+    # Put exif data into the final image
+    # Do not run on jxl or png as it seems to not actually put the exif data in them
+    if [ "${EXTERNAL_EXTENSION}" != "jxl" ] && [ "${EXTERNAL_EXTENSION}" != "png" ]; then
+        run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${EXTERNAL_EXTENSION}\""
     fi
-
-    local FINALIZE_END
-    FINALIZE_END=$(date +%s%3N)
-    local FINALIZE_ELAPSED
-    FINALIZE_ELAPSED=$((FINALIZE_END - FINALIZE_START))
-    log "Elapsed time finalize: ${FINALIZE_ELAPSED} ms"
 }
 
 post_process() {
     FUNCTION="post_process"
     log "Starting post-processing"
-
-    local POST_START
-    POST_START=$(date +%s%3N)
 
     local ALL_IN_ONE_FLAGS
 
@@ -293,17 +283,12 @@ post_process() {
     fi
 
     run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+
     run "finalize_image \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}\""
 
     if [ "$PROCESSED" -eq 1 ]; then
         run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
     fi
-
-    local POST_END
-    POST_END=$(date +%s%3N)
-    local POST_ELAPSED
-    POST_ELAPSED=$((POST_END - POST_START))
-    log "Elapsed time: ${POST_ELAPSED} ms"
 }
 
 FUNCTION="main" # Variable to hold the stage of the script for log output
