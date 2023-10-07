@@ -23,12 +23,12 @@ fi
 
 # ********* User variables *********
 
-PARALLEL_RAW=0 # Amount of dng images to read in parallel, will max out a core so dont set this too high, 0 for auto
-AUTO_WHITE_BALANCE=0 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space
+PARALLEL_RAW=0 # Amount of dng images to read in parallel, will max out a core so dont set this too high, 0 for auto
+AUTO_WHITE_BALANCE=1 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
 IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
-SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
+SHRINK_IMAGES=0 # Shrink images by half to speed up processing and then superresolution back up to the original size at the end
 DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
 DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
@@ -36,6 +36,7 @@ COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
 SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to disable, set to 1 to enable
 SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
+HALF_SIZE=0 # Enable to reduce raw image size in half to speed up reading, set to 0 to disable, set to 1 to enable
 
 # ********* End user variables *********
 
@@ -279,6 +280,10 @@ post_process() {
 
     if [ "${SHARPEN}" -eq 1 ]; then
         ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --sharpen unsharp_mask --sharpen_amount ${SHARPEN_AMOUNT}"
+    fi
+
+    if [ "${HALF_SIZE}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --half_size"
     fi
 
     if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
