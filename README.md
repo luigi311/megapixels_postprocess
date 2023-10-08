@@ -1,6 +1,6 @@
 # megapixels_postprocess
 
-This is a custom postprocess.sh script to be used for [megapixels](https://git.sr.ht/~martijnbraam/megapixels). This was developed and tested for the pinephone but theres nothing specific to the pinephone so it should work on whatever megapixels supports.
+This is a custom postprocess.sh script to be used for [megapixels](https://gitlab.com/postmarketOS/megapixels). This was developed and tested for the pinephone but theres nothing specific to the pinephone so it should work on whatever megapixels supports. Most of the logic is handled by python scripts from the following repo https://github.com/luigi311/Low-Power-Image-Processing that will run in a container or natively if you have it installed and accessable from the postprocess.sh script via the variables defined.
 
 ## Usage
 
