@@ -264,7 +264,7 @@ post_process() {
     fi
 
     if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
-        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution --super_resolution_method ESPCN --super_resolution_scale 2"
         PROCESSED=1
     fi
 
