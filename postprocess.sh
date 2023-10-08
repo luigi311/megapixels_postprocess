@@ -23,12 +23,12 @@ fi
 
 # ********* User variables *********
 
-PARALLEL_RAW=2 # Amount of dng images to read in parallel, will max out a core so dont set this too high
-AUTO_WHITE_BALANCE=0 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
-EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space
+EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space or png for lossless
+PARALLEL_RAW=0 # Amount of dng images to read in parallel, will max out a core so dont set this too high, 0 for auto
+AUTO_WHITE_BALANCE=1 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
 IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
-SHRINK_IMAGES=0 # Shrink images by half to speed up prcoessing and then superresolution back up to the original size at the end
+SHRINK_IMAGES=0 # Shrink images by half to speed up processing and then superresolution back up to the original size at the end
 DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
 DENOISE_ALL=0 # Flag to denoise all images, set to 0 to disable, 1 to enable
 DENOISE=0 # Enable denoise, set to 0 to disable, disabled by default due to poor performance on some devices
@@ -36,6 +36,7 @@ COLOR=0 # Enable color adjustments, set to 0 to disable, set to 1 to enable
 SUPER_RESOLUTION=0 # Enable Super Resolution, set to 0 to disable, set to 1 to enable
 SHARPEN=1 # Enable to apply sharpening on the postprocessed image, set to 0 to disable, set to 1 to enable
 SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
+HALF_SIZE=0 # Enable to reduce raw image size in half to speed up reading, set to 0 to disable, set to 1 to enable
 
 # ********* End user variables *********
 
@@ -43,7 +44,6 @@ SHARPEN_AMOUNT=1.0 # Amount of sharpening to apply to postprocessed image
 # Setup variables
 INTERNAL_EXTENSION="png" # Image extension to use for internal outputs, recommended to use a lossless format
 FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to enable
-LEGACY_STACK=0 # Force use the old legacy stack, set to 0 to disable, set to 1 to enable
 CONTAINER_RUNTIME="podman" # Set the container runtime to use, podman or docker
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing" # Path to check for the low power image processing repo if not using docker containers
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
@@ -78,15 +78,11 @@ trap_die() {
     if [ -f "${POSTPROCESS_QUEUE_FILE}" ]; then
         # Remove all instances of ${QUEUE_NAME} from ${POSTPROCESS_QUEUE_FILE} file
         sed -i "/${ESCAPED_QUEUE_NAME}/d" "${POSTPROCESS_QUEUE_FILE}"
-        sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
     fi
 
     if [ "${EXIT_CODE}" -eq 0 ]; then
         log "Completed successfully, cleaning up"
-        #rm -f "${LOGFILE:?}"
-
-        # Clean up the temp dir containing the burst
-        #rm -rf "${BURST_DIR:?}"
+        rm -f "${LOGFILE:?}"
     else
         log "ERROR: \"${CURRENT_COMMAND}\" command failed with exit code ${EXIT_CODE}."
     fi
@@ -164,18 +160,14 @@ run() {
 }
 
 exiftool_function() {
-    # If exiftool is installed copy the exif data over from the tiff to the jpeg
-    # since imagemagick is stupid
-    run "exiftool -software=\"Megapixels\" -fast \
+    # Copy exif data from one image to another
+    run "exiftool -fast -software=\"Megapixels\" \
         -x ImageWidth -x ImageHeight -x ImageSize -x Orientation -x ColorSpace -x Compression \
         -overwrite_original -tagsFromfile \"$1\" \"$2\""
 }
 
 finalize_image() {
     log "Finalize image"
-    
-    local FINALIZE_START
-    FINALIZE_START=$(date +%s%3N)
 
     local FALLBACK
     FALLBACK=0
@@ -212,193 +204,91 @@ finalize_image() {
     fi
 
     if [ "$FALLBACK" -eq 1 ]; then
-        OUTPUT_EXTENSION="${INTERNAL_EXTENSION}"
+        log "Failed to use ${EXTERNAL_EXTENSION} using ${INTERNAL_EXTENSION} instead"
+        EXTERNAL_EXTENSION="${INTERNAL_EXTENSION}"
+        run "mv -f \"${1}\" \"${2}.${INTERNAL_EXTENSION}\""
     fi
 
-    local FINALIZE_END
-    FINALIZE_END=$(date +%s%3N)
-    local FINALIZE_ELAPSED
-    FINALIZE_ELAPSED=$((FINALIZE_END - FINALIZE_START))
-    log "Elapsed time finalize: ${FINALIZE_ELAPSED} ms"
-}
-
-single_image() {
-    FUNCTION="single_image"
-    log "Processing single image"
-    
-    local SINGLE_START
-    SINGLE_START=$(date +%s%3N)
-
-    local ALL_IN_ONE_FLAGS
-
-    if [ "$LEGACY_STACK" -eq 0 ]; then
-        FUNCTION="single_image: all_in_one"
-        log "Starting all_in_one"
-        ALL_IN_ONE_FLAGS="--single_image --parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
-
-        if [ "${AUTO_WHITE_BALANCE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_white_balance"
-        fi
-
-        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
-            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
-        else
-            COMMAND="all_in_one"
-        fi
-
-        if [ "$(check_command "${COMMAND}")" ]; then
-            run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\""
-            run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-        else
-            log "Falling back to legacy stack"
-            LEGACY_STACK=1
-        fi
+    # Put exif data into the final image
+    # Do not run on jxl or png as it seems to not actually put the exif data in them
+    if [ "${EXTERNAL_EXTENSION}" != "jxl" ] && [ "${EXTERNAL_EXTENSION}" != "png" ]; then
+        run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${2}.${EXTERNAL_EXTENSION}\""
     fi
-    
-    if [ "$LEGACY_STACK" -eq 1 ]; then
-        # Create using raw processing tools
-        DCRAW=""
-        TIFF_EXT="dng.tiff"
-        
-        if command -v "dcraw_emu" >/dev/null; then
-            DCRAW=dcraw_emu
-            # -fbdd 1   Raw denoising with FBDD
-            denoise="-fbdd 1"
-        elif [ -x "/usr/lib/libraw/dcraw_emu" ]; then
-            DCRAW=/usr/lib/libraw/dcraw_emu
-            # -fbdd 1   Raw denoising with FBDD
-            denoise="-fbdd 1"
-        elif command -v "dcraw" >/dev/null; then
-            DCRAW=dcraw
-            TIFF_EXT="tiff"
-        fi
-
-        CONVERT=""
-        if command -v "convert" >/dev/null; then
-            CONVERT="convert"
-            # -fbdd 1   Raw denoising with FBDD
-            denoise="-fbdd 1"
-        elif command -v "gm" >/dev/null; then
-            CONVERT="gm"
-        fi
-
-        if [ -n "${DCRAW}" ]; then
-            # $DCRAW FLAGS
-            # +M                use embedded color matrix
-            # -H 4              Recover highlights by rebuilding them
-            # -o 1              Output in sRGB colorspace
-            # -q 3              Debayer with AHD algorithm
-            # -T                Output TIFF
-
-            run "${DCRAW} +M -H 4 -o 1 -q 3 -T ${denoise} \"${MAIN_PICTURE}.dng\""
-
-            # If imagemagick is available, convert the tiff to jpeg and apply slight sharpening
-            if [ -n "${CONVERT}" ]; then
-                if [ "${CONVERT}" = "convert" ]; then
-                    run "convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 -sigmoidal-contrast 6,50% \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-                else
-                    # sadly sigmoidal contrast is not available in imagemagick
-                    run "gm convert \"${MAIN_PICTURE}.${TIFF_EXT}\" -sharpen 0x1.0 \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\""
-                fi
-
-                run "finalize_image ${BURST_DIR}/main.${INTERNAL_EXTENSION} ${TARGET_NAME}"
-
-                log "Complete"
-            else
-                run "finalize_image \"${MAIN_PICTURE}.${TIFF_EXT}\" ${TARGET_NAME}"
-            fi
-        else
-            log "ERROR: No raw processing tools found"
-        fi
-    fi
-
-    local SINGLE_END
-    SINGLE_END=$(date +%s%3N)
-    local SINGLE_ELAPSED
-    SINGLE_ELAPSED=$((SINGLE_END - SINGLE_START))
-    log "Elapsed time: ${SINGLE_ELAPSED} ms"
 }
 
 post_process() {
     FUNCTION="post_process"
     log "Starting post-processing"
 
-    local POST_START
-    POST_START=$(date +%s%3N)
-
     local ALL_IN_ONE_FLAGS
 
-    if [ "$LEGACY_STACK" -eq 0 ]; then
-        FUNCTION="post_process: all_in_one"
-        log "Starting all_in_one"
-        ALL_IN_ONE_FLAGS="--parallel_raw ${PARALLEL_RAW} --interal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
+    FUNCTION="post_process: all_in_one"
+    log "Starting all_in_one"
+    ALL_IN_ONE_FLAGS="--internal_image_extension ${INTERNAL_EXTENSION} --histogram_method histogram_clahe --scale_down 540"
 
-        if [ "${AUTO_WHITE_BALANCE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_white_balance"
-        fi
-
-        if [ "${SHRINK_IMAGES}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
-        fi
-
-        if [ "${AUTO_STACK}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${DEHAZE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
-            PROCESSED=1
-        fi
-
-        if [ "${DENOISE_ALL}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${DENOISE}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise --denoise_method fast --denoise_amount 2"
-            PROCESSED=1
-        fi
-
-        if [ "${COLOR}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
-            PROCESSED=1
-        fi
-
-        if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution_method ESPCN --super_resolution_scale 2"
-            PROCESSED=1
-        fi
-
-        if [ "${SHARPEN}" -eq 1 ]; then
-            ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --sharpen unsharp_mask --sharpen_amount ${SHARPEN_AMOUNT}"
-        fi
-
-        if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
-            COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
-        else
-            COMMAND="all_in_one"
-        fi
-
-        if [ "$PROCESSED" -eq 1 ]; then
-            run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
-            run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
-        fi
+    if [ "${PARALLEL_RAW}" -gt 0 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --parallel_raw ${PARALLEL_RAW}"
     fi
 
-    # Copy exif data from the main picture to both the processed and unprocessed images in parallel
-    for IMAGE in "${TARGET_NAME}" "${TARGET_NAME}_processed"; do
-        if [ -f "${IMAGE}.${OUTPUT_EXTENSION}" ]; then
-            run "exiftool_function \"${MAIN_PICTURE}.dng\" \"${IMAGE}.${OUTPUT_EXTENSION}\"" &
-        fi
-    done
+    if [ "${AUTO_WHITE_BALANCE}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_white_balance"
+    fi
 
-    local POST_END
-    POST_END=$(date +%s%3N)
-    local POST_ELAPSED
-    POST_ELAPSED=$((POST_END - POST_START))
-    log "Elapsed time: ${POST_ELAPSED} ms"
+    if [ "${SHRINK_IMAGES}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --shrink_images"
+    fi
+
+    if [ "${AUTO_STACK}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --auto_stack --stack_method ECC --stack_amount 2"
+        PROCESSED=1
+    fi
+
+    if [ "${DEHAZE}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --dehaze_method darktables"
+        PROCESSED=1
+    fi
+
+    if [ "${DENOISE_ALL}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise_all --denoise_all_method fast --denoise_all_amount 2"
+        PROCESSED=1
+    fi
+
+    if [ "${DENOISE}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --denoise --denoise_method fast --denoise_amount 2"
+        PROCESSED=1
+    fi
+
+    if [ "${COLOR}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --color_method image_adaptive_3dlut"
+        PROCESSED=1
+    fi
+
+    if [ "${SUPER_RESOLUTION}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --super_resolution --super_resolution_method ESPCN --super_resolution_scale 2"
+        PROCESSED=1
+    fi
+
+    if [ "${SHARPEN}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --sharpen unsharp_mask --sharpen_amount ${SHARPEN_AMOUNT}"
+    fi
+
+    if [ "${HALF_SIZE}" -eq 1 ]; then
+        ALL_IN_ONE_FLAGS="${ALL_IN_ONE_FLAGS} --half_size"
+    fi
+
+    if [ -f "${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py" ]; then
+        COMMAND="python ${LOW_POWER_IMAGE_PROCESSING}/all_in_one.py"
+    else
+        COMMAND="all_in_one"
+    fi
+
+    run "${COMMAND} \"${BURST_DIR}\" \"${ALL_IN_ONE_FLAGS}\" 2>&1"
+
+    run "finalize_image \"${BURST_DIR}/main.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}\""
+
+    if [ "$PROCESSED" -eq 1 ]; then
+        run "finalize_image \"${BURST_DIR}/main_processed.${INTERNAL_EXTENSION}\" \"${TARGET_NAME}_processed\""
+    fi
 }
 
 FUNCTION="main" # Variable to hold the stage of the script for log output
@@ -414,29 +304,6 @@ if [ "$SAVE_DNG" -eq 1 ]; then
     log "Saving DNG"
     run "cp \"${MAIN_PICTURE}.dng\" \"${TARGET_NAME}.dng\""
 fi
-
-# Check if $QUEUE_NAME exists in SINGLE_QUEUE_FILE, if so exit if not append $QUEUE_NAME to SINGLE_QUEUE_FILE
-# This is used by the megapixels script to determine if it should be ran or if another instance is already running
-if [ -f "${SINGLE_QUEUE_FILE}" ]; then
-    if grep -q "${QUEUE_NAME}" "${SINGLE_QUEUE_FILE}"; then
-        log "Skipping ${QUEUE_NAME}, already queued"
-        exit 0
-    fi
-fi
-
-printf "%s\n" "${QUEUE_NAME}" >> "${SINGLE_QUEUE_FILE}"
-FIRST_LINE=$(head -n 1 ${SINGLE_QUEUE_FILE})
-
-# Loop until the first line in the queue is the same as the current instance
-while [ "${FIRST_LINE}" != "${QUEUE_NAME}" ]; do
-    sleep 5
-    FIRST_LINE=$(head -n 1 ${SINGLE_QUEUE_FILE})
-done
-
-run "single_image"
-
-# Remove from single queue file if it exists
-sed -i "/${ESCAPED_QUEUE_NAME}/d" "${SINGLE_QUEUE_FILE}"
 
 # Check if $QUEUE_NAME exists in POSTPROCESS_QUEUE_FILE, if so exit if not append $QUEUE_NAME to POSTPROCESS_QUEUE_FILE
 # This is used by the megapixels script to determine if it should be ran or if another instance is already running
