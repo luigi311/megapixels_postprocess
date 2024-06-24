@@ -2,15 +2,6 @@
 
 set -e
 
-
-mkdir -p "${HOME}/.config/megapixels"
-
-rm -f "${HOME}/.config/megapixels/postprocess.sh"
-
-ln -s "${PWD}/postprocess.sh" "${HOME}/.config/megapixels/postprocess.sh"
-
-chmod +x "${HOME}/.config/megapixels/postprocess.sh"
-
 if [ "$(id -u)" -eq 0 ]; then
     echo "Script must not be ran as root"
     exit 1
@@ -22,6 +13,11 @@ if [ -z "${USER}" ]; then
     echo "Could not determine current user"
     exit 1
 fi
+
+mkdir -p "${HOME}/.config/megapixels"
+rm -f "${HOME}/.config/megapixels/postprocess.sh"
+ln -s "${PWD}/postprocess.sh" "${HOME}/.config/megapixels/postprocess.sh"
+chmod +x "${HOME}/.config/megapixels/postprocess.sh"
 
 # Switch to root
 sudo -s <<EOF
