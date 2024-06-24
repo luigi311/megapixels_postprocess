@@ -24,9 +24,9 @@ fi
 # ********* User variables *********
 
 EXTERNAL_EXTENSION="png" # Final image extension to output the final image, change to jxl/jpg/avif/webp to save space or png for lossless
+IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 PARALLEL_RAW=0 # Amount of dng images to read in parallel, will max out a core so dont set this too high, 0 for auto
 AUTO_WHITE_BALANCE=1 # Enable auto white balance, enable to fix color issues such as green images, set to 0 to disable, set to 1 to enable
-IMAGE_QUALITY=90 # Quality of the final image when converting (0-100)
 AUTO_STACK=1 # Enable auto stacking, set to 0 to disable, set to 1 to enable
 SHRINK_IMAGES=0 # Shrink images by half to speed up processing and then superresolution back up to the original size at the end
 DEHAZE=0 # Flag to dehaze all images, set to 0 to disable, 1 to enable
