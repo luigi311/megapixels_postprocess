@@ -134,15 +134,15 @@ run() {
                 log "Running: $COMMAND_ARG"
                 ret=$(eval "$COMMAND_ARG" 2>&1)
             elif [ -x "$(command -v "$CONTAINER_RUNTIME")" ]; then
-                # Do not replace if BURST_DIR or TARGET_DIR are "."
-                if [ "$BURST_DIR" != "." ]; then
-                    COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
+                # Do not replace if BURST_DIR or TARGET_DIR starts with a dot
+                if [[ "$BURST_DIR" == .* ]] || [[ "$TARGET_DIR" == .* ]]; then
+                    log "ERROR: BURST_DIR or TARGET_DIR need to be a full path"
+                    log " BURST_DIR: $BURST_DIR"
+                    log " TARGET_DIR: $TARGET_DIR"
+                    exit 1
                 fi
-
-                if [ "$TARGET_DIR" != "." ]; then
-                    COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
-                fi
-
+                COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
+                COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
                 RUN_COMMAND="${CONTAINER_RUNTIME} run --rm -it ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
