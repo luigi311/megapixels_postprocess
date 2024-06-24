@@ -47,7 +47,6 @@ FORCE_CONTAINER=0 # Force the use of container, set to 0 to disable, set to 1 to
 CONTAINER_RUNTIME="podman" # Set the container runtime to use, podman or docker
 LOW_POWER_IMAGE_PROCESSING="/etc/megapixels/Low-Power-Image-Processing" # Path to check for the low power image processing repo if not using docker containers
 DOCKER_IMAGE="docker.io/luigi311/low-power-image-processing:latest"
-SINGLE_QUEUE_FILE="/tmp/megapixels_single_queue.txt"
 POSTPROCESS_QUEUE_FILE="/tmp/megapixels_postprocess_queue.txt"
 
 # Runtime variables
@@ -58,7 +57,6 @@ TARGET_DIR=$(dirname "${TARGET_NAME}")
 SAVE_DNG="$3"
 LOGFILE="${TARGET_NAME}.log"
 MAIN_PICTURE="${BURST_DIR}/1"
-OUTPUT_EXTENSION="${EXTERNAL_EXTENSION}"
 
 
 # keep track of the last executed command
