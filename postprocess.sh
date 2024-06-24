@@ -129,21 +129,20 @@ run() {
             MOUNTS="-v \"${BURST_DIR}:/mnt\" -v \"${TARGET_DIR}:/destination\""
 
 
-            # If force container is set, run the command in a container
-            # if command avaliable locally run it locally
-            # if command not avaliable locally, run it in a container if avaliable
-            if [ "$FORCE_CONTAINER" -eq 1 ]; then
-                COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
-                COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
-                RUN_COMMAND="${CONTAINER_RUNTIME} run --rm -it ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
-                log "Running: $RUN_COMMAND"
-                ret=$(eval "$RUN_COMMAND" 2>&1)
-            elif [ -x "$(command -v "${COMMAND_NAME}")" ]; then
+            # if force container is not enabled and if the command exists run it
+            if [ "$FORCE_CONTAINER" -eq 0 ] && [ -x "$(command -v "$COMMAND_NAME")" ]; then
                 log "Running: $COMMAND_ARG"
                 ret=$(eval "$COMMAND_ARG" 2>&1)
             elif [ -x "$(command -v "$CONTAINER_RUNTIME")" ]; then
-                COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
-                COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
+                # Do not replace if BURST_DIR or TARGET_DIR are "."
+                if [ "$BURST_DIR" != "." ]; then
+                    COMMAND_ARG="${COMMAND_ARG//$BURST_DIR/\/mnt}"
+                fi
+
+                if [ "$TARGET_DIR" != "." ]; then
+                    COMMAND_ARG="${COMMAND_ARG//$TARGET_DIR/\/destination}"
+                fi
+
                 RUN_COMMAND="${CONTAINER_RUNTIME} run --rm -it ${MOUNTS} --user 0 --rm \"${DOCKER_IMAGE}\" $COMMAND_ARG"
                 log "Running: $RUN_COMMAND"
                 ret=$(eval "$RUN_COMMAND" 2>&1)
